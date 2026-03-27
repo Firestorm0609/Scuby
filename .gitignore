@@ -1,2 +1,5 @@
 *.json
 .env
+__pycache__/
+*.bak
+*.pyc
