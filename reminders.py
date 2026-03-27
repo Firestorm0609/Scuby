@@ -1,0 +1,483 @@
+"""
+reminders.py — Scuby's reminder system.
+
+Lets users set one-off reminders that Scuby DMs them at a specified time.
+
+Natural language (handled by AI intent router in handlers.py):
+  "remind me in 30 minutes to check BONK"
+  "remind me at 3pm to look at my portfolio"
+  "set a reminder for tomorrow 9am — check the market"
+
+Direct command:
+  /remindme <time> <message>
+  /remindme 30m check BONK price
+  /remindme 2h look at portfolio
+  /remindme 9pm check trending tokens
+
+View / cancel:
+  /reminders   — list your active reminders
+  /unremind <id or partial text> — cancel a reminder
+
+Background job: reminder_check_job (every 30 seconds)
+  - Fires any reminders that are due
+  - DMs the user who set them
+
+Supported time formats:
+  30s / 30sec           → 30 seconds from now
+  5m / 5min             → 5 minutes from now
+  2h / 2hr / 2hours     → 2 hours from now
+  1d / 1day             → 1 day from now
+  3:30pm / 15:30        → today at that time (UTC)
+  tomorrow 9am          → next day 9:00 UTC
+"""
+
+import asyncio
+import copy
+import json
+import logging
+import os
+import re
+import time
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import ContextTypes
+
+from utils import escape_md
+
+logger = logging.getLogger(__name__)
+
+REMINDERS_FILE      = "reminders.json"
+MAX_REMINDERS_USER  = 10
+REMINDER_CHECK_SECS = 30   # job runs every 30s
+
+
+# ─── Persistence ──────────────────────────────────────────────────────────────
+
+def load_reminders() -> dict:
+    try:
+        with open(REMINDERS_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_reminders(r: dict) -> None:
+    try:
+        with open(REMINDERS_FILE, "w") as f:
+            json.dump(r, f)
+    except Exception as ex:
+        logger.warning(f"Could not save reminders: {ex}")
+
+
+async def save_reminders_async(r: dict) -> None:
+    await asyncio.to_thread(save_reminders, copy.deepcopy(r))
+
+
+# ─── Time parser ──────────────────────────────────────────────────────────────
+
+def parse_reminder_time(raw: str) -> Optional[float]:
+    """
+    Parse a time string into a Unix timestamp (UTC).
+    Returns None if unparseable.
+
+    Supports:
+      30s, 30sec, 30 seconds
+      5m, 5min, 5 minutes
+      2h, 2hr, 2 hours
+      1d, 1day, 1 days
+      3:30pm, 3:30 pm, 15:30
+      9am, 9 am, 3pm
+      tomorrow 9am, tomorrow 3:30pm
+    """
+    raw = raw.strip().lower()
+    now = datetime.now(timezone.utc)
+
+    # ── Relative: Xs / Xm / Xh / Xd ──────────────────────────────────────────
+    m = re.match(r'^(\d+(?:\.\d+)?)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)$', raw)
+    if m:
+        val  = float(m.group(1))
+        unit = m.group(2)[0]   # s/m/h/d
+        delta = {
+            's': timedelta(seconds=val),
+            'm': timedelta(minutes=val),
+            'h': timedelta(hours=val),
+            'd': timedelta(days=val),
+        }[unit]
+        return (now + delta).timestamp()
+
+    # ── "in X minutes/hours" ──────────────────────────────────────────────────
+    m = re.match(r'^in\s+(\d+(?:\.\d+)?)\s*(s|sec|second|seconds|m|min|minute|minutes|h|hr|hour|hours|d|day|days)$', raw)
+    if m:
+        val  = float(m.group(1))
+        unit = m.group(2)[0]
+        delta = {
+            's': timedelta(seconds=val),
+            'm': timedelta(minutes=val),
+            'h': timedelta(hours=val),
+            'd': timedelta(days=val),
+        }[unit]
+        return (now + delta).timestamp()
+
+    # ── "tomorrow [time]" ─────────────────────────────────────────────────────
+    tomorrow = False
+    time_raw = raw
+    if raw.startswith("tomorrow"):
+        tomorrow = True
+        time_raw = raw[len("tomorrow"):].strip()
+
+    # ── Clock time: 3pm / 3:30pm / 15:30 / 9am ───────────────────────────────
+    # 3:30pm or 3:30 pm
+    m = re.match(r'^(\d{1,2}):(\d{2})\s*(am|pm)?$', time_raw)
+    if m:
+        hour   = int(m.group(1))
+        minute = int(m.group(2))
+        ampm   = m.group(3)
+        if ampm == "pm" and hour != 12:
+            hour += 12
+        elif ampm == "am" and hour == 12:
+            hour = 0
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if tomorrow:
+            target += timedelta(days=1)
+        elif target <= now:
+            target += timedelta(days=1)
+        return target.timestamp()
+
+    # 9am / 3pm / 12pm
+    m = re.match(r'^(\d{1,2})\s*(am|pm)$', time_raw)
+    if m:
+        hour = int(m.group(1))
+        ampm = m.group(2)
+        if ampm == "pm" and hour != 12:
+            hour += 12
+        elif ampm == "am" and hour == 12:
+            hour = 0
+        target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if tomorrow:
+            target += timedelta(days=1)
+        elif target <= now:
+            target += timedelta(days=1)
+        return target.timestamp()
+
+    return None
+
+
+def _fmt_fire_time(ts: float) -> str:
+    """Format a Unix timestamp as a human-readable string."""
+    dt      = datetime.fromtimestamp(ts, tz=timezone.utc)
+    now     = datetime.now(timezone.utc)
+    delta   = ts - time.time()
+
+    if delta < 60:
+        return f"in {int(delta)}s"
+    if delta < 3600:
+        return f"in {int(delta/60)}m"
+    if delta < 86400:
+        return f"in {int(delta/3600)}h {int((delta%3600)/60)}m"
+    return dt.strftime("%b %d at %H:%M UTC")
+
+
+# ─── Command handlers ─────────────────────────────────────────────────────────
+
+async def handle_remindme(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /remindme <time> <message>
+    e.g. /remindme 30m check BONK
+         /remindme 3pm portfolio check
+         /remindme tomorrow 9am morning scan
+    """
+    if not update.message or not update.effective_user:
+        return
+
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            "⏰ *Set a reminder*\n\n"
+            "Usage: `/remindme <time> <message>`\n\n"
+            "Examples:\n"
+            "  `/remindme 30m check BONK price`\n"
+            "  `/remindme 2h look at my portfolio`\n"
+            "  `/remindme 9pm evening scan`\n"
+            "  `/remindme tomorrow 9am morning check`\n"
+            "  `/remindme 3:30pm check trending`\n\n"
+            "_All times are UTC\\. Scuby will DM you\\!_",
+            parse_mode="MarkdownV2",
+        )
+        return
+
+    user_id = update.effective_user.id
+
+    # Check user limit
+    reminders: dict = context.bot_data.get("reminders", load_reminders())
+    user_reminders  = reminders.get(str(user_id), [])
+    if len(user_reminders) >= MAX_REMINDERS_USER:
+        await update.message.reply_text(
+            f"Ruh\\-roh\\! 🐾 You already have *{MAX_REMINDERS_USER}* reminders set\\. "
+            "Use /reminders to cancel some first\\!",
+            parse_mode="MarkdownV2",
+        )
+        return
+
+    # Try to parse time from args
+    # First try single token, then two tokens (e.g. "tomorrow 9am")
+    fire_ts    = None
+    msg_start  = 1
+
+    fire_ts = parse_reminder_time(args[0])
+    if fire_ts is None and len(args) >= 2:
+        fire_ts   = parse_reminder_time(f"{args[0]} {args[1]}")
+        msg_start = 2
+
+    if fire_ts is None:
+        await update.message.reply_text(
+            "Ruh\\-roh\\! 🐾 Scuby couldn't parse that time\\.\n\n"
+            "Try: `30m`, `2h`, `9pm`, `3:30pm`, `tomorrow 9am`",
+            parse_mode="MarkdownV2",
+        )
+        return
+
+    # Remainder is the reminder message
+    reminder_text = " ".join(args[msg_start:]).strip()
+    if not reminder_text:
+        reminder_text = "⏰ Reminder from Scuby!"
+
+    # Clamp minimum: at least 10 seconds in the future
+    if fire_ts < time.time() + 10:
+        await update.message.reply_text(
+            "Ruh\\-roh\\! 🐾 That time is in the past or too soon\\. "
+            "Try `30m` or later\\!",
+            parse_mode="MarkdownV2",
+        )
+        return
+
+    # Save reminder
+    reminder_id = f"{int(time.time() * 1000)}_{os.urandom(2).hex()}"
+    reminder = {
+        "id":        reminder_id,
+        "user_id":   user_id,
+        "chat_id":   update.effective_chat.id,
+        "fire_ts":   fire_ts,
+        "text":      reminder_text,
+        "created_ts": time.time(),
+    }
+
+    reminders.setdefault(str(user_id), []).append(reminder)
+    context.bot_data["reminders"] = reminders
+    await save_reminders_async(reminders)
+
+    e        = escape_md
+    fire_str = e(_fmt_fire_time(fire_ts))
+    msg_str  = e(reminder_text[:80])
+
+    await update.message.reply_text(
+        f"⏰ *Reminder set\\!*\n\n"
+        f"🐾 Scuby will DM you *{fire_str}*:\n"
+        f"_{msg_str}_\n\n"
+        f"_Use /reminders to see all your reminders\\._",
+        parse_mode="MarkdownV2",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("📋 My reminders", callback_data="menu|reminders"),
+            InlineKeyboardButton("🏠 Menu",         callback_data="menu|home"),
+        ]]),
+    )
+
+
+async def handle_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/reminders — list active reminders for this user."""
+    if not update.message or not update.effective_user:
+        return
+
+    user_id        = update.effective_user.id
+    reminders: dict = context.bot_data.get("reminders", load_reminders())
+    user_reminders  = reminders.get(str(user_id), [])
+
+    # Filter out already-fired ones
+    now            = time.time()
+    user_reminders = [r for r in user_reminders if r["fire_ts"] > now]
+
+    if not user_reminders:
+        await update.message.reply_text(
+            "⏰ You have no active reminders\\.\n\n"
+            "Set one with: `/remindme 30m check BONK`",
+            parse_mode="MarkdownV2",
+        )
+        return
+
+    e     = escape_md
+    lines = [f"⏰ *Your reminders \\({len(user_reminders)}\\):*\n"]
+
+    for i, r in enumerate(sorted(user_reminders, key=lambda x: x["fire_ts"]), 1):
+        fire_str = e(_fmt_fire_time(r["fire_ts"]))
+        msg_str  = e(r["text"][:60])
+        lines.append(f"*{i}\\.* _{fire_str}_\n   {msg_str}")
+
+    rows = []
+    for r in sorted(user_reminders, key=lambda x: x["fire_ts"]):
+        label = r["text"][:30] + ("..." if len(r["text"]) > 30 else "")
+        rows.append([InlineKeyboardButton(
+            f"❌ Cancel: {label}",
+            callback_data=f"delreminder|{r['id']}",
+        )])
+    rows.append([InlineKeyboardButton("🏠 Main Menu", callback_data="menu|home")])
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode="MarkdownV2",
+        reply_markup=InlineKeyboardMarkup(rows),
+    )
+
+
+async def handle_unremind(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/unremind <partial text or number> — cancel a reminder."""
+    if not update.message or not update.effective_user:
+        return
+
+    user_id        = update.effective_user.id
+    reminders: dict = context.bot_data.get("reminders", load_reminders())
+    user_reminders  = reminders.get(str(user_id), [])
+
+    if not user_reminders:
+        await update.message.reply_text("🐾 No reminders to cancel\\!", parse_mode="MarkdownV2")
+        return
+
+    fragment = " ".join(context.args or []).strip().lower()
+    if not fragment:
+        await handle_reminders(update, context)
+        return
+
+    before = len(user_reminders)
+    # Try matching by number
+    if fragment.isdigit():
+        idx = int(fragment) - 1
+        sorted_r = sorted(user_reminders, key=lambda x: x["fire_ts"])
+        if 0 <= idx < len(sorted_r):
+            reminders[str(user_id)] = [r for r in user_reminders if r["id"] != sorted_r[idx]["id"]]
+        else:
+            await update.message.reply_text("Ruh\\-roh\\! That number isn't in your list\\.", parse_mode="MarkdownV2")
+            return
+    else:
+        reminders[str(user_id)] = [
+            r for r in user_reminders
+            if fragment not in r["text"].lower()
+        ]
+
+    removed = before - len(reminders.get(str(user_id), []))
+    context.bot_data["reminders"] = reminders
+    await save_reminders_async(reminders)
+
+    e = escape_md
+    if removed:
+        await update.message.reply_text(
+            f"✅ Cancelled *{removed}* reminder\\(s\\) matching *{e(fragment)}* 🐾",
+            parse_mode="MarkdownV2",
+        )
+    else:
+        await update.message.reply_text(
+            f"Hmm\\! No reminder found matching *{e(fragment)}*\\. Use /reminders to see your list\\.",
+            parse_mode="MarkdownV2",
+        )
+
+
+async def handle_delreminder_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Callback: delreminder|<reminder_id>"""
+    query = update.callback_query
+    await query.answer()
+
+    parts = query.data.split("|", 1)
+    if len(parts) != 2:
+        return
+
+    reminder_id = parts[1]
+    user_id     = query.from_user.id if query.from_user else None
+    if not user_id:
+        return
+
+    reminders: dict = context.bot_data.get("reminders", {})
+    before = reminders.get(str(user_id), [])
+    reminders[str(user_id)] = [r for r in before if r["id"] != reminder_id]
+    removed = len(before) - len(reminders[str(user_id)])
+    context.bot_data["reminders"] = reminders
+    await save_reminders_async(reminders)
+
+    remaining = [r for r in reminders.get(str(user_id), []) if r["fire_ts"] > time.time()]
+    e = escape_md
+
+    try:
+        if not remaining:
+            await query.edit_message_text(
+                "✅ Reminder cancelled\\. No more active reminders\\. 🐾",
+                parse_mode="MarkdownV2",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🏠 Menu", callback_data="menu|home")
+                ]]),
+            )
+        else:
+            lines = ["✅ Reminder cancelled\\.\n\n⏰ *Still active:*\n"]
+            for r in sorted(remaining, key=lambda x: x["fire_ts"]):
+                lines.append(f"• _{e(_fmt_fire_time(r['fire_ts']))}_ — {e(r['text'][:40])}")
+            rows = [[InlineKeyboardButton(
+                f"❌ {r['text'][:30]}",
+                callback_data=f"delreminder|{r['id']}",
+            )] for r in remaining]
+            rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu|home")])
+            await query.edit_message_text(
+                "\n".join(lines),
+                parse_mode="MarkdownV2",
+                reply_markup=InlineKeyboardMarkup(rows),
+            )
+    except Exception as ex:
+        logger.warning(f"handle_delreminder_button: {ex}")
+
+
+# ─── Background job ───────────────────────────────────────────────────────────
+
+async def reminder_check_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Runs every REMINDER_CHECK_SECS (30s).
+    Fires any reminders whose fire_ts has passed.
+    DMs the user who set them.
+    """
+    reminders: dict = context.bot_data.get("reminders", {})
+    if not reminders:
+        return
+
+    now     = time.time()
+    changed = False
+
+    for uid_str, user_reminders in list(reminders.items()):
+        due = [r for r in user_reminders if r["fire_ts"] <= now]
+        if not due:
+            continue
+
+        for reminder in due:
+            e       = escape_md
+            msg     = reminder.get("text", "⏰ Reminder!")
+            fire_dt = datetime.fromtimestamp(reminder["fire_ts"], tz=timezone.utc).strftime("%H:%M UTC")
+
+            try:
+                await context.bot.send_message(
+                    chat_id=reminder["user_id"],
+                    text=(
+                        f"⏰ *Reminder, Raggy\\!*\n\n"
+                        f"_{e(msg)}_\n\n"
+                        f"_Set for {e(fire_dt)} — Scuby never forgets\\! 🐾_"
+                    ),
+                    parse_mode="MarkdownV2",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("⏰ Set another", callback_data="menu|home"),
+                        InlineKeyboardButton("🏠 Menu",        callback_data="menu|home"),
+                    ]]),
+                )
+                logger.info(f"Reminder fired for user {reminder['user_id']}: {msg[:40]}")
+            except Exception as send_err:
+                logger.warning(f"reminder_check_job: failed to DM {reminder['user_id']}: {send_err}")
+
+        # Remove fired reminders
+        reminders[uid_str] = [r for r in user_reminders if r["fire_ts"] > now]
+        changed = True
+
+    if changed:
+        context.bot_data["reminders"] = reminders
+        await save_reminders_async(reminders)

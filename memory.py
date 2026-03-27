@@ -1,0 +1,886 @@
+"""
+memory.py — Scuby's long-term learning brain.
+
+Five learning systems that make Scuby smarter over time:
+
+1. PERSISTENT USER MEMORY
+   - Saves every conversation to disk per user
+   - Scuby remembers your name, trading style, favourite themes
+   - Survives bot restarts
+
+2. TOKEN PERFORMANCE TRACKING
+   - Records every sniffed token's attributes at sniff time
+   - Checks prices 1h, 6h, 24h, 7d later
+   - Builds a ground-truth database of what actually pumped
+
+3. USER PREFERENCE LEARNING
+   - Tracks what you search, watch, filter for
+   - Detects patterns: "Raggy always looks for dog coins under 20k mcap"
+   - Makes proactive suggestions
+
+4. FILTER PERFORMANCE SCORING
+   - Every smart filter alert is tracked
+   - Checks if the token pumped or dumped after the alert
+   - Surfaces win-rate stats: "Your 10K-20K filter has 60% pump rate"
+
+5. ALPHA PATTERN ENGINE
+   - Correlates token attributes (mcap, liq, age, vol/mcap) at sniff time
+   - Against actual price performance
+   - Generates natural language insights: "Tokens under 15K mcap with liq>8K
+     have 3x'd 45% of the time in this chat"
+"""
+
+import asyncio
+import copy
+import json
+import logging
+import os
+import re
+import time
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
+from typing import Any
+
+import httpx
+
+from utils import escape_md, safe_float, fetch_current_prices
+
+logger = logging.getLogger(__name__)
+
+# ─── File paths ───────────────────────────────────────────────────────────────
+USER_MEMORY_FILE      = "user_memory.json"
+TOKEN_PERF_FILE       = "token_performance.json"
+FILTER_SCORES_FILE    = "filter_scores.json"
+PATTERN_CACHE_FILE    = "pattern_cache.json"
+
+# ─── Limits ───────────────────────────────────────────────────────────────────
+MAX_CONV_HISTORY      = 30
+MAX_TRACKED_TOKENS    = 2000
+PERF_CHECK_INTERVALS  = [
+    ("1h",  3600),
+    ("6h",  21600),
+    ("24h", 86400),
+    ("7d",  604800),
+]
+MIN_TOKENS_FOR_PATTERN = 10
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PERSISTENCE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _load(path: str, default: Any) -> Any:
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default
+
+
+def _save(path: str, data: Any) -> None:
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f)
+    except Exception as e:
+        logger.warning(f"Could not save {path}: {e}")
+
+
+async def _save_async(path: str, data: Any) -> None:
+    await asyncio.to_thread(_save, path, copy.deepcopy(data))
+
+
+def load_user_memory()   -> dict: return _load(USER_MEMORY_FILE,   {})
+def load_token_perf()    -> dict: return _load(TOKEN_PERF_FILE,    {})
+def load_filter_scores() -> dict: return _load(FILTER_SCORES_FILE, {})
+def load_pattern_cache() -> dict: return _load(PATTERN_CACHE_FILE, {})
+
+async def save_user_memory_async(d: dict)   -> None: await _save_async(USER_MEMORY_FILE,   d)
+async def save_token_perf_async(d: dict)    -> None: await _save_async(TOKEN_PERF_FILE,    d)
+async def save_filter_scores_async(d: dict) -> None: await _save_async(FILTER_SCORES_FILE, d)
+async def save_pattern_cache_async(d: dict) -> None: await _save_async(PATTERN_CACHE_FILE, d)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 1. PERSISTENT USER MEMORY
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def get_user_profile(user_memory: dict, user_id: int) -> dict:
+    """Return or create a user profile."""
+    uid = str(user_id)
+    if uid not in user_memory:
+        user_memory[uid] = {
+            "user_id":       user_id,
+            "name":          None,
+            "first_seen":    time.time(),
+            "last_seen":     time.time(),
+            "message_count": 0,
+            "conversation":  [],
+            "preferences":   {
+                "themes":       [],
+                "mcap_range":   None,
+                "risk_style":   None,
+                "fav_tokens":   [],
+            },
+            "search_history": [],
+            "insights_shown": [],
+        }
+    return user_memory[uid]
+
+
+def update_user_seen(user_memory: dict, user_id: int, name: str | None = None) -> None:
+    profile = get_user_profile(user_memory, user_id)
+    profile["last_seen"]     = time.time()
+    profile["message_count"] = profile.get("message_count", 0) + 1
+    if name and not profile.get("name"):
+        profile["name"] = name
+
+
+def push_conversation(user_memory: dict, user_id: int, role: str, content: str) -> None:
+    """Push a message into the persistent conversation history."""
+    profile = get_user_profile(user_memory, user_id)
+    conv    = profile.setdefault("conversation", [])
+    conv.append({"role": role, "content": content, "ts": time.time()})
+    if len(conv) > MAX_CONV_HISTORY * 2:
+        profile["conversation"] = conv[-(MAX_CONV_HISTORY * 2):]
+
+
+def get_conversation(user_memory: dict, user_id: int) -> list[dict]:
+    """Get conversation history as role/content pairs (no ts field)."""
+    profile = get_user_profile(user_memory, user_id)
+    return [{"role": m["role"], "content": m["content"]}
+            for m in profile.get("conversation", [])]
+
+
+def record_search(user_memory: dict, user_id: int, ticker: str, ca: str = "") -> None:
+    """Record that user searched for a token."""
+    profile = get_user_profile(user_memory, user_id)
+    history = profile.setdefault("search_history", [])
+    history.append({"ticker": ticker.upper(), "ca": ca, "ts": time.time()})
+    if len(history) > 200:
+        profile["search_history"] = history[-200:]
+
+    favs   = profile["preferences"].setdefault("fav_tokens", [])
+    counts = defaultdict(int)
+    for s in history[-50:]:
+        counts[s["ticker"]] += 1
+    top = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    profile["preferences"]["fav_tokens"] = [t for t, _ in top]
+
+
+def infer_preferences(user_memory: dict, user_id: int) -> dict:
+    """Analyse search history to infer trading style and preferences."""
+    profile = get_user_profile(user_memory, user_id)
+    history = profile.get("search_history", [])
+    if len(history) < 5:
+        return {}
+
+    tickers = [s["ticker"] for s in history[-100:]]
+
+    THEME_KEYWORDS = {
+        "dog":   ["BONK","WIF","DOGE","SHIB","INU","FLOKI","WOOF","PUP"],
+        "cat":   ["CAT","KITTY","NEKO","MEOW","PUSSY"],
+        "ai":    ["AI","GPT","NEURAL","BOT","AGENT"],
+        "pepe":  ["PEPE","FROG","KEK"],
+        "trump": ["TRUMP","MAGA","DONALD"],
+        "meme":  ["MEME","CHAD","BASED","DEGEN","WOJAK"],
+    }
+    theme_counts: dict[str, int] = defaultdict(int)
+    for ticker in tickers:
+        for theme, keywords in THEME_KEYWORDS.items():
+            if any(kw in ticker for kw in keywords):
+                theme_counts[theme] += 1
+
+    top_themes = sorted(theme_counts.items(), key=lambda x: x[1], reverse=True)
+    themes     = [t for t, c in top_themes if c >= 2][:3]
+    profile["preferences"]["themes"] = themes
+
+    messages = " ".join(m["content"] for m in profile.get("conversation", [])[-20:]).lower()
+    if any(w in messages for w in ["ape", "degen", "yolo", "all in", "100x"]):
+        profile["preferences"]["risk_style"] = "degen"
+    elif any(w in messages for w in ["safe", "risk", "careful", "slow", "steady"]):
+        profile["preferences"]["risk_style"] = "cautious"
+    else:
+        profile["preferences"]["risk_style"] = "balanced"
+
+    return {
+        "themes":     themes,
+        "risk_style": profile["preferences"]["risk_style"],
+        "fav_tokens": profile["preferences"]["fav_tokens"][:5],
+        "name":       profile.get("name"),
+    }
+
+
+def build_memory_context(user_memory: dict, user_id: int) -> str:
+    """Build a short context string to prepend to Scuby's system prompt."""
+    prefs = infer_preferences(user_memory, user_id)
+    if not prefs:
+        return ""
+
+    parts = []
+    if prefs.get("name"):
+        parts.append(f"The user's name is {prefs['name']}.")
+    if prefs.get("themes"):
+        parts.append(f"They mostly trade {', '.join(prefs['themes'])} themed tokens.")
+    if prefs.get("risk_style"):
+        style = prefs["risk_style"]
+        if style == "degen":
+            parts.append("They are a degen — they love high risk, early launches, 100x plays.")
+        elif style == "cautious":
+            parts.append("They prefer safer plays with decent liquidity and lower risk.")
+        else:
+            parts.append("They are a balanced trader — not too risky, not too safe.")
+    if prefs.get("fav_tokens"):
+        parts.append(f"Their most searched tokens: {', '.join(prefs['fav_tokens'][:3])}.")
+
+    if not parts:
+        return ""
+    return "PERSONAL CONTEXT ABOUT THIS USER:\n" + " ".join(parts) + "\n\nUse this context to personalise your responses naturally. Don't announce that you know this — just factor it in.\n\n"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2. TOKEN PERFORMANCE TRACKING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def record_token_snapshot(
+    token_perf: dict,
+    ca: str,
+    symbol: str,
+    chat_id: str,
+    user_id: int,
+    pair_data: dict,
+) -> None:
+    """Record a token's attributes at the moment it was sniffed."""
+    if ca in token_perf:
+        return
+
+    if len(token_perf) >= MAX_TRACKED_TOKENS:
+        sorted_cas = sorted(token_perf.items(), key=lambda x: x[1].get("sniff_ts", 0))
+        for old_ca, _ in sorted_cas[:MAX_TRACKED_TOKENS // 10]:
+            del token_perf[old_ca]
+
+    mcap    = safe_float(pair_data.get("marketCap") or pair_data.get("fdv") or 0)
+    liq     = safe_float((pair_data.get("liquidity") or {}).get("usd", 0))
+    vol1h   = safe_float((pair_data.get("volume")    or {}).get("h1",  0))
+    vol24h  = safe_float((pair_data.get("volume")    or {}).get("h24", 0))
+    h1      = safe_float((pair_data.get("priceChange") or {}).get("h1",  0))
+    h24     = safe_float((pair_data.get("priceChange") or {}).get("h24", 0))
+    price   = safe_float(pair_data.get("priceUsd") or 0)
+    age_h   = 0.0
+    created = pair_data.get("pairCreatedAt")
+    if created:
+        age_h = (time.time() * 1000 - created) / 3_600_000
+
+    token_perf[ca] = {
+        "ca":        ca,
+        "symbol":    symbol,
+        "chat_id":   chat_id,
+        "user_id":   user_id,
+        "sniff_ts":  time.time(),
+        "sniff_price": price,
+        "attrs": {
+            "mcap":       mcap,
+            "liq":        liq,
+            "vol1h":      vol1h,
+            "vol24h":     vol24h,
+            "h1":         h1,
+            "h24":        h24,
+            "age_h":      age_h,
+            "vol_mcap":   vol1h / mcap if mcap > 0 else 0,
+            "liq_mcap":   liq   / mcap if mcap > 0 else 0,
+        },
+        "perf": {},
+        "last_check_ts": 0,
+    }
+    logger.debug(f"Token snapshot recorded: {symbol} ({ca[:8]}...)")
+
+
+async def update_performance_checkpoints(
+    token_perf: dict,
+    http: httpx.AsyncClient,
+) -> bool:
+    """Check prices for tokens that are due for a performance checkpoint."""
+    now     = time.time()
+    changed = False
+
+    due: list[str] = []
+    for ca, rec in token_perf.items():
+        sniff_ts = rec.get("sniff_ts", 0)
+        perf     = rec.get("perf", {})
+        for label, interval in PERF_CHECK_INTERVALS:
+            if label not in perf and (now - sniff_ts) >= interval:
+                due.append(ca)
+                break
+
+    if not due:
+        return False
+
+    prices = await fetch_current_prices(due[:50], http)
+
+    for ca in due[:50]:
+        rec   = token_perf.get(ca)
+        if not rec:
+            continue
+        price = prices.get(ca, 0)
+        if price <= 0:
+            continue
+
+        sniff_price = rec.get("sniff_price", 0)
+        if sniff_price <= 0:
+            continue
+
+        sniff_ts = rec["sniff_ts"]
+        multiple = price / sniff_price
+        rec.setdefault("perf", {})
+
+        for label, interval in PERF_CHECK_INTERVALS:
+            if label not in rec["perf"] and (now - sniff_ts) >= interval:
+                rec["perf"][label] = {
+                    "multiple":   multiple,
+                    "price":      price,
+                    "checked_ts": now,
+                }
+                logger.info(f"Perf checkpoint {label}: {rec['symbol']} = {multiple:.2f}x")
+                changed = True
+
+        rec["last_check_ts"] = now
+
+    return changed
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3. FILTER PERFORMANCE SCORING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def record_filter_hit(
+    filter_scores: dict,
+    filter_id: str,
+    filter_label: str,
+    ca: str,
+    symbol: str,
+    sniff_price: float,
+) -> None:
+    """Record that a smart filter fired on a token."""
+    filter_scores.setdefault(filter_id, {
+        "label":  filter_label,
+        "hits":   [],
+        "stats":  {"total": 0, "pumped": 0, "dumped": 0, "flat": 0, "win_rate": 0.0},
+    })
+    if any(h["ca"] == ca for h in filter_scores[filter_id]["hits"]):
+        return
+    filter_scores[filter_id]["hits"].append({
+        "ca":          ca,
+        "symbol":      symbol,
+        "sniff_price": sniff_price,
+        "sniff_ts":    time.time(),
+        "outcome":     None,
+    })
+    filter_scores[filter_id]["stats"]["total"] += 1
+
+
+async def update_filter_outcomes(
+    filter_scores: dict,
+    http: httpx.AsyncClient,
+    check_after_secs: int = 3600,
+) -> bool:
+    """Fill in outcomes for filter hits that are old enough to judge."""
+    now     = time.time()
+    changed = False
+
+    for fid, fdata in filter_scores.items():
+        pending = [
+            h for h in fdata.get("hits", [])
+            if h.get("outcome") is None
+            and (now - h["sniff_ts"]) >= check_after_secs
+        ]
+        if not pending:
+            continue
+
+        cas    = [h["ca"] for h in pending[:30]]
+        prices = await fetch_current_prices(cas, http)
+
+        for hit in pending[:30]:
+            ca    = hit["ca"]
+            price = prices.get(ca, 0)
+            if price <= 0 or hit["sniff_price"] <= 0:
+                continue
+            multiple = price / hit["sniff_price"]
+            if multiple >= 1.5:
+                hit["outcome"] = "pumped"
+            elif multiple <= 0.7:
+                hit["outcome"] = "dumped"
+            else:
+                hit["outcome"] = "flat"
+            hit["outcome_multiple"] = multiple
+            changed = True
+
+        resolved = [h for h in fdata["hits"] if h.get("outcome")]
+        if resolved:
+            pumped   = sum(1 for h in resolved if h["outcome"] == "pumped")
+            dumped   = sum(1 for h in resolved if h["outcome"] == "dumped")
+            flat     = sum(1 for h in resolved if h["outcome"] == "flat")
+            win_rate = pumped / len(resolved) if resolved else 0.0
+            fdata["stats"] = {
+                "total":    len(fdata["hits"]),
+                "resolved": len(resolved),
+                "pumped":   pumped,
+                "dumped":   dumped,
+                "flat":     flat,
+                "win_rate": win_rate,
+                "avg_multiple": sum(h.get("outcome_multiple", 1) for h in resolved) / len(resolved),
+            }
+            logger.info(f"Filter {fdata['label']}: win_rate={win_rate:.0%} ({pumped}/{len(resolved)})")
+
+    return changed
+
+
+def get_filter_report(filter_scores: dict, filter_id: str) -> str:
+    """Generate a human-readable performance report for a filter."""
+    e    = escape_md
+    data = filter_scores.get(filter_id)
+    if not data:
+        return "No performance data yet for this filter\\."
+
+    stats  = data.get("stats", {})
+    label  = e(data.get("label", filter_id))
+    total  = stats.get("total", 0)
+    res    = stats.get("resolved", 0)
+    wr     = stats.get("win_rate", 0)
+    avg_x  = stats.get("avg_multiple", 1)
+
+    if res < 3:
+        return f"🎯 Filter *{label}*\n_Still gathering data \\({total} hits so far\\)\\._"
+
+    emoji = "🔥" if wr >= 0.6 else ("✅" if wr >= 0.4 else "⚠️")
+    return (
+        f"🎯 *Filter Performance: {label}*\n\n"
+        f"{emoji} Win rate: *{e(f'{wr:.0%}')}* \\({stats.get('pumped',0)}/{res} pumped\\)\n"
+        f"📊 Avg return: *{e(f'{avg_x:.2f}')}x* in 1h\n"
+        f"📉 Dumped: {stats.get('dumped',0)} \\| ➡️ Flat: {stats.get('flat',0)}\n"
+        f"_Based on {res} resolved hits out of {total} total_"
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 4 & 5. ALPHA PATTERN ENGINE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _bucket(value: float, thresholds: list) -> str:
+    """Assign a value to a named bucket."""
+    for label, lo, hi in thresholds:
+        if lo <= value < hi:
+            return label
+    return thresholds[-1][0]
+
+
+MCAP_BUCKETS = [
+    ("micro",  0,         10_000),
+    ("tiny",   10_000,    50_000),
+    ("small",  50_000,   200_000),
+    ("mid",    200_000, 1_000_000),
+    ("large",  1_000_000, float("inf")),
+]
+LIQ_BUCKETS = [
+    ("low",    0,       5_000),
+    ("ok",     5_000,  20_000),
+    ("good",   20_000, 100_000),
+    ("deep",   100_000, float("inf")),
+]
+AGE_BUCKETS = [
+    ("brand_new", 0,   0.5),
+    ("very_new",  0.5, 2),
+    ("new",       2,   12),
+    ("older",     12,  float("inf")),
+]
+VOLMCAP_BUCKETS = [
+    ("low",     0,    0.1),
+    ("med",     0.1,  0.5),
+    ("high",    0.5,  2.0),
+    ("extreme", 2.0,  float("inf")),
+]
+
+
+def analyse_patterns(token_perf: dict, chat_id: str = "") -> list[dict]:
+    """Analyse the token performance database and extract actionable patterns."""
+    resolved = [
+        rec for rec in token_perf.values()
+        if rec.get("perf", {}).get("1h")
+        and (not chat_id or rec.get("chat_id") == chat_id)
+    ]
+
+    if len(resolved) < MIN_TOKENS_FOR_PATTERN:
+        return []
+
+    groups: dict[str, list[float]] = defaultdict(list)
+
+    for rec in resolved:
+        attrs   = rec.get("attrs", {})
+        perf_1h = rec["perf"]["1h"]["multiple"]
+
+        mcap_b    = _bucket(attrs.get("mcap",     0), MCAP_BUCKETS)
+        liq_b     = _bucket(attrs.get("liq",      0), LIQ_BUCKETS)
+        age_b     = _bucket(attrs.get("age_h",    0), AGE_BUCKETS)
+        volmcap_b = _bucket(attrs.get("vol_mcap", 0), VOLMCAP_BUCKETS)
+
+        groups[f"mcap:{mcap_b}"].append(perf_1h)
+        groups[f"liq:{liq_b}"].append(perf_1h)
+        groups[f"age:{age_b}"].append(perf_1h)
+        groups[f"volmcap:{volmcap_b}"].append(perf_1h)
+        groups[f"mcap:{mcap_b}+liq:{liq_b}"].append(perf_1h)
+        groups[f"mcap:{mcap_b}+age:{age_b}"].append(perf_1h)
+        groups[f"liq:{liq_b}+volmcap:{volmcap_b}"].append(perf_1h)
+        groups[f"age:{age_b}+liq:{liq_b}"].append(perf_1h)
+
+    patterns = []
+    for key, multiples in groups.items():
+        if len(multiples) < 5:
+            continue
+        avg_x     = sum(multiples) / len(multiples)
+        pump_rate = sum(1 for m in multiples if m >= 1.5) / len(multiples)
+        dump_rate = sum(1 for m in multiples if m <= 0.7) / len(multiples)
+        if pump_rate >= 0.35 or avg_x >= 1.4:
+            patterns.append({
+                "key":       key,
+                "count":     len(multiples),
+                "avg_x":     avg_x,
+                "pump_rate": pump_rate,
+                "dump_rate": dump_rate,
+                "strength":  pump_rate * avg_x,
+            })
+
+    return sorted(patterns, key=lambda p: p["strength"], reverse=True)
+
+
+async def learning_job(context) -> None:
+    """
+    Runs every 30 minutes.
+    - Seeds pattern engine with Solana historical data on first run
+    - Updates performance checkpoints for tracked tokens
+    - Updates filter outcome scores
+    - Pushes proactive suggestions to active users
+    """
+    http:          httpx.AsyncClient = context.bot_data["http"]
+    token_perf:    dict = context.bot_data.get("token_perf",    {})
+    filter_scores: dict = context.bot_data.get("filter_scores", {})
+    user_memory:   dict = context.bot_data.get("user_memory",   {})
+
+    # 0. Bootstrap seed data on first run
+    seed_injected = context.bot_data.get("seed_injected", False)
+    if not seed_injected:
+        has_seed = any(v.get("_seed_data") for v in token_perf.values())
+        if not has_seed:
+            try:
+                from solana_seed_data import get_seed_token_perf
+                seed_data = await get_seed_token_perf(http)
+                if seed_data:
+                    token_perf.update(seed_data)
+                    context.bot_data["token_perf"] = token_perf
+                    await save_token_perf_async(token_perf)
+                    logger.info(f"Bootstrapped pattern engine with {len(seed_data)} real Solana tokens")
+                else:
+                    logger.warning("Seed data fetch returned empty")
+            except Exception as seed_err:
+                logger.warning(f"Seed bootstrap failed (non-critical): {seed_err}")
+        context.bot_data["seed_injected"] = True
+
+    # 1. Update token performance checkpoints
+    perf_changed = await update_performance_checkpoints(token_perf, http)
+    if perf_changed:
+        await save_token_perf_async(token_perf)
+        logger.info("Token performance checkpoints updated")
+
+    # 2. Update filter outcome scores
+    fs_changed = await update_filter_outcomes(filter_scores, http)
+    if fs_changed:
+        await save_filter_scores_async(filter_scores)
+        logger.info("Filter scores updated")
+
+    # 3. Proactive suggestions disabled — would burn AI API quota in background
+    # Re-enable once on a paid API tier by uncommenting the block below.
+    # now = time.time()
+    # for uid_str, profile in user_memory.items(): ...
+
+    await save_user_memory_async(user_memory)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 6. MISSING FUNCTIONS — generate_suggestions, patterns, mark_suggestion_shown
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def generate_suggestions(
+    user_memory: dict,
+    token_perf: dict,
+    filter_scores: dict,
+    user_id: int,
+    chat_id: str,
+) -> list[dict]:
+    """
+    Generate personalised alpha suggestions for a user.
+    Called by learning_job every 30 minutes.
+    Returns a list of {id, text, action} dicts.
+    """
+    e = escape_md
+    suggestions: list[dict] = []
+    profile = get_user_profile(user_memory, user_id)
+    shown   = set(profile.get("insights_shown", []))
+
+    # ── Suggestion 1: a smart filter is performing really well ────────────────
+    for fid, fdata in filter_scores.items():
+        stats = fdata.get("stats", {})
+        if stats.get("resolved", 0) < 5 or stats.get("win_rate", 0) < 0.6:
+            continue
+        sid = f"filter_winner_{fid}"
+        if sid in shown:
+            continue
+        label = e(fdata.get("label", "your filter"))
+        wr    = stats["win_rate"]
+        res   = stats["resolved"]
+        avg_x = stats.get("avg_multiple", 1)
+        suggestions.append({
+            "id": sid,
+            "text": (
+                f"🐾 *Scuby spotted a winning pattern\\!*\n\n"
+                f"Your filter *{label}* is performing well:\n\n"
+                f"🔥 Win rate: *{e(f'{wr:.0%}')}* \\({stats.get('pumped', 0)}/{res} pumped\\)\n"
+                f"📈 Avg return: *{e(f'{avg_x:.2f}')}x* in 1h\n\n"
+                f"_Keep it running, Raggy\\! Scuby thinks this is a good one\\._"
+            ),
+            "action": None,
+        })
+        if len(suggestions) >= 2:
+            break
+
+    # ── Suggestion 2: learned pattern → suggest a smart filter ───────────────
+    if len(suggestions) < 2 and len(token_perf) >= MIN_TOKENS_FOR_PATTERN:
+        patterns = analyse_patterns(token_perf, chat_id)
+        if patterns:
+            best = patterns[0]
+            pr   = best["pump_rate"]
+            key  = best["key"]
+            sid  = "pattern_suggest_" + key.replace(":", "_").replace("+", "_")
+            if sid not in shown and pr >= 0.5 and best["count"] >= 8:
+                parts         = key.split("+")
+                criteria_desc = []
+                filter_parts  = []
+
+                MCAP_RANGES  = {
+                    "micro": (0, 10_000), "tiny": (10_000, 50_000),
+                    "small": (50_000, 200_000), "mid": (200_000, 1_000_000),
+                }
+                LIQ_MINIMUMS = {"ok": 5_000, "good": 20_000, "deep": 100_000}
+                AGE_LIMITS   = {"brand_new": 30, "very_new": 60, "new": 180}
+
+                for part in parts:
+                    if ":" not in part:
+                        continue
+                    k, v = part.split(":", 1)
+                    if k == "mcap" and v in MCAP_RANGES:
+                        lo, hi = MCAP_RANGES[v]
+                        if lo > 0:
+                            criteria_desc.append(f"MCap ${lo//1000}K–${hi//1000}K")
+                            filter_parts.append(f"mcap between {lo//1000}k and {hi//1000}k")
+                        else:
+                            criteria_desc.append(f"MCap under ${hi//1000}K")
+                            filter_parts.append(f"mcap under {hi//1000}k")
+                    elif k == "liq" and v in LIQ_MINIMUMS:
+                        mn = LIQ_MINIMUMS[v]
+                        criteria_desc.append(f"Liq ≥ ${mn//1000}K")
+                        filter_parts.append(f"liq over {mn//1000}k")
+                    elif k == "age" and v in AGE_LIMITS:
+                        mn = AGE_LIMITS[v]
+                        criteria_desc.append(f"Age ≤ {mn}m")
+                        filter_parts.append(f"age under {mn} minutes")
+
+                if criteria_desc and filter_parts:
+                    cmd_str  = " ".join(filter_parts)
+                    desc_str = " \\+ ".join(e(d) for d in criteria_desc)
+                    avg_x_str = str(round(best["avg_x"], 2))
+                    suggestions.append({
+                        "id": sid,
+                        "text": (
+                            f"🧠 *Scuby learned a new pattern\\!*\n\n"
+                            f"From *{e(str(best['count']))}* tokens, I found:\n\n"
+                            f"Tokens with *{desc_str}* pump "
+                            f"*{e(f'{pr:.0%}')}* of the time within 1h "
+                            f"\\(avg *{e(avg_x_str)}x*\\)\\!\n\n"
+                            f"Want Scuby to watch for these automatically?"
+                        ),
+                        "action": f"smartwatch:{cmd_str}",
+                    })
+
+    # ── Suggestion 3: user keeps searching the same token ────────────────────
+    if len(suggestions) < 2:
+        history = profile.get("search_history", [])
+        tickers = [s["ticker"] for s in history[-50:]]
+        counts  = Counter(tickers)
+        for ticker, cnt in counts.most_common(3):
+            if cnt >= 3:
+                sid = f"fav_token_{ticker}"
+                if sid not in shown:
+                    suggestions.append({
+                        "id": sid,
+                        "text": (
+                            f"🐾 *Scuby noticed something\\!*\n\n"
+                            f"You've searched *${e(ticker)}* *{cnt} times* recently\\.\n\n"
+                            f"Want me to set a price alert? "
+                            f"Just say: _'alert me when {ticker} hits 2x'_\n\n"
+                            f"_Or /monitor {ticker} 5m for regular pings\\._"
+                        ),
+                        "action": None,
+                    })
+                    break
+
+    return [s for s in suggestions if s["id"] not in shown]
+
+
+def mark_suggestion_shown(user_memory: dict, user_id: int, suggestion_id: str) -> None:
+    """Mark a suggestion as shown so it won't be repeated."""
+    profile = get_user_profile(user_memory, user_id)
+    shown   = profile.setdefault("insights_shown", [])
+    if suggestion_id not in shown:
+        shown.append(suggestion_id)
+    if len(shown) > 200:
+        profile["insights_shown"] = shown[-200:]
+
+
+def analyse_global_patterns(global_pool: dict) -> list[dict]:
+    """Analyse cross-chat pooled token data for global alpha patterns."""
+    token_data = global_pool.get("tokens", {})
+    if not token_data or len(token_data) < MIN_TOKENS_FOR_PATTERN:
+        return []
+    return analyse_patterns(token_data, chat_id="")
+
+
+def patterns_to_text(patterns: list[dict], chat_id: str = "") -> str:
+    """Format local pattern list into a Telegram MarkdownV2 message."""
+    if not patterns:
+        return ""
+
+    e = escape_md
+
+    READABLE: dict[str, dict[str, str]] = {
+        "mcap":    {
+            "micro": "MCap < $10K", "tiny": "MCap $10K–$50K",
+            "small": "MCap $50K–$200K", "mid": "MCap $200K–$1M",
+            "large": "MCap > $1M",
+        },
+        "liq":     {
+            "low": "Liq < $5K", "ok": "Liq $5K–$20K",
+            "good": "Liq $20K–$100K", "deep": "Liq > $100K",
+        },
+        "age":     {
+            "brand_new": "Age < 30min", "very_new": "Age < 2h",
+            "new": "Age < 12h", "older": "Age > 12h",
+        },
+        "volmcap": {
+            "low": "Vol/MCap < 0.1", "med": "Vol/MCap 0.1–0.5",
+            "high": "Vol/MCap 0.5–2x", "extreme": "Vol/MCap > 2x",
+        },
+    }
+
+    total_tokens = sum(p["count"] for p in patterns[:8])
+    lines = [
+        f"🧠 *Scuby's Alpha Patterns*\n"
+        f"_Based on {e(str(total_tokens))} sniffed tokens in this chat_\n"
+    ]
+
+    for i, p in enumerate(patterns[:8], 1):
+        key       = p["key"]
+        pump_rate = p["pump_rate"]
+        avg_x     = p["avg_x"]
+        count     = p["count"]
+        dump_rate = p.get("dump_rate", 0)
+
+        parts = []
+        for segment in key.split("+"):
+            if ":" not in segment:
+                continue
+            k, v = segment.split(":", 1)
+            label = READABLE.get(k, {}).get(v, f"{k}:{v}")
+            parts.append(label)
+
+        readable = " \\+ ".join(e(pp) for pp in parts)
+        emoji    = "🔥" if pump_rate >= 0.6 else ("✅" if pump_rate >= 0.45 else "📊")
+
+        lines.append(
+            f"{emoji} *Pattern {i}:* {readable}\n"
+            f"   📈 Pump rate: *{e(f'{pump_rate:.0%}')}* "
+            f"\\| 📉 Dump: *{e(f'{dump_rate:.0%}')}* "
+            f"\\| Avg: *{e(f'{avg_x:.2f}')}x* "
+            f"\\| Sample: *{e(str(count))}* tokens"
+        )
+
+    lines.append("\n_⚠️ Patterns are informational only\\. More sniffs = better data\\. DYOR\\!_")
+    return "\n".join(lines)
+
+
+def patterns_to_text_merged(
+    local_patterns: list[dict],
+    global_patterns: list[dict],
+    global_count: int,
+) -> str:
+    """Format merged local + global patterns into a Telegram MarkdownV2 message."""
+    e = escape_md
+
+    READABLE: dict[str, dict[str, str]] = {
+        "mcap":    {
+            "micro": "MCap<$10K", "tiny": "MCap $10K\\-$50K",
+            "small": "MCap $50K\\-$200K", "mid": "MCap $200K\\-$1M",
+            "large": "MCap>$1M",
+        },
+        "liq":     {
+            "low": "Liq<$5K", "ok": "Liq $5K\\-$20K",
+            "good": "Liq $20K\\-$100K", "deep": "Liq>$100K",
+        },
+        "age":     {
+            "brand_new": "<30min", "very_new": "<2h",
+            "new": "<12h", "older": ">12h",
+        },
+        "volmcap": {
+            "low": "VM<0\\.1", "med": "VM 0\\.1\\-0\\.5",
+            "high": "VM 0\\.5\\-2x", "extreme": "VM>2x",
+        },
+    }
+
+    def _fmt_key(key: str) -> str:
+        parts = []
+        for seg in key.split("+"):
+            if ":" not in seg:
+                continue
+            k, v = seg.split(":", 1)
+            parts.append(READABLE.get(k, {}).get(v, e(f"{k}:{v}")))
+        return " \\+ ".join(parts)
+
+    lines = ["🧠 *Scuby's Alpha Patterns*\n"]
+
+    if local_patterns:
+        local_total = sum(p["count"] for p in local_patterns[:5])
+        lines.append(f"📍 *This Chat* \\({e(str(local_total))} tokens\\):\n")
+        for p in local_patterns[:5]:
+            pr    = p["pump_rate"]
+            avg_x = p["avg_x"]
+            count = p["count"]
+            emoji = "🔥" if pr >= 0.6 else ("✅" if pr >= 0.45 else "📊")
+            lines.append(
+                f"  {emoji} {_fmt_key(p['key'])}\n"
+                f"     _{e(f'{pr:.0%}')} pump \\| avg {e(f'{avg_x:.2f}')}x \\| {e(str(count))} tokens_"
+            )
+
+    if global_patterns:
+        lines.append(f"\n🌐 *Global Pool* \\({e(str(global_count))} tokens\\):\n")
+        for p in global_patterns[:3]:
+            pr    = p["pump_rate"]
+            avg_x = p["avg_x"]
+            emoji = "🔥" if pr >= 0.6 else "✅"
+            lines.append(
+                f"  {emoji} {_fmt_key(p['key'])}\n"
+                f"     _{e(f'{pr:.0%}')} pump \\| avg {e(f'{avg_x:.2f}')}x_"
+            )
+
+    if not local_patterns and not global_patterns:
+        return ""
+
+    lines.append(
+        "\n_⚠️ Patterns are informational only\\. DYOR\\!_\n"
+        "_Use /patterns after more sniffs for better accuracy\\._"
+    )
+    return "\n".join(lines)

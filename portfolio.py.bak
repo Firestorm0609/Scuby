@@ -1,0 +1,188 @@
+"""
+portfolio.py — Scooby's portfolio tracker.
+
+Lets users track a bag of tokens and get:
+  • /portfolio          — snapshot of all holdings with live P&L
+  • /addtoken <CA> <qty> [avg_price]  — add a position
+  • /removetoken <CA>   — remove a position
+  • Daily briefing job  — morning P&L summary pushed to each chat
+  • Natural language:
+      "add 1000 BONK to my portfolio"
+      "show my portfolio"
+      "how is my bag doing?"
+"""
+
+import asyncio
+import copy
+import json
+import logging
+import os
+import time
+from datetime import datetime, timezone
+
+import httpx
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
+
+from utils import escape_md, safe_float, fetch_current_prices, dex_get
+
+logger = logging.getLogger(__name__)
+
+PORTFOLIO_FILE = "portfolios.json"
+
+
+# ─── Persistence ──────────────────────────────────────────────────────────────
+
+def load_portfolios() -> dict:
+    try:
+        with open(PORTFOLIO_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_portfolios(p: dict) -> None:
+    try:
+        with open(PORTFOLIO_FILE, "w") as f:
+            json.dump(p, f)
+    except Exception as e:
+        logger.warning(f"Could not save portfolios: {e}")
+
+
+async def save_portfolios_async(p: dict) -> None:
+    await asyncio.to_thread(save_portfolios, copy.deepcopy(p))
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def _fmt_usd(v: float) -> str:
+    if abs(v) >= 1_000_000: return f"${v/1_000_000:.2f}M"
+    if abs(v) >= 1_000:     return f"${v/1_000:.2f}K"
+    return f"${v:.2f}"
+
+
+def _pnl_emoji(pct: float) -> str:
+    if pct >= 100:  return "🌙"
+    if pct >= 50:   return "🚀"
+    if pct >= 20:   return "📈"
+    if pct >= 0:    return "✅"
+    if pct >= -20:  return "📉"
+    if pct >= -50:  return "🩸"
+    return "💀"
+
+
+# ─── Portfolio snapshot ────────────────────────────────────────────────────────
+
+async def build_portfolio_snapshot(user_id: int, http: httpx.AsyncClient, bot_data: dict) -> str:
+    portfolios: dict = bot_data.get("portfolios", {})
+    holdings = portfolios.get(str(user_id), {})
+
+    if not holdings:
+        return (
+            "🐾 *Scooby's Portfolio Tracker*\n\n"
+            "Ruh-roh\\! You haven't added any tokens yet\\, Raggy\\!\n\n"
+            "Add one by saying:\n"
+            "_'add 1000 BONK to my portfolio'_\n"
+            "_'add 500 WIF at 0\\.50'_ \\(with avg price\\)\n\n"
+            "Or use: `/addtoken <CA> <quantity> [avg_price]`"
+        )
+
+    e = escape_md
+    cas = [h["ca"] for h in holdings.values()]
+    prices = await fetch_current_prices(cas, http)
+
+    total_value    = 0.0
+    total_cost     = 0.0
+    lines          = ["🐾 *Your Solana Portfolio*\n"]
+    any_price      = False
+
+    sorted_holdings = sorted(holdings.items(), key=lambda x: x[1].get("symbol", ""))
+
+    for symbol, h in sorted_holdings:
+        ca       = h["ca"]
+        qty      = safe_float(h.get("qty", 0))
+        avg      = safe_float(h.get("avg_price", 0))
+        current  = prices.get(ca, 0)
+        added_dt = datetime.fromtimestamp(h.get("added_ts", 0), tz=timezone.utc).strftime("%b %d")
+
+        if current > 0:
+            any_price    = True
+            value        = qty * current
+            cost         = qty * avg if avg > 0 else 0
+            total_value += value
+            total_cost  += cost
+
+            if avg > 0 and cost > 0:
+                pnl_usd = value - cost
+                pnl_pct = ((current - avg) / avg) * 100
+                emoji   = _pnl_emoji(pnl_pct)
+                pnl_str = f"{emoji} {e(f'{pnl_pct:+.1f}%')} \\({e(_fmt_usd(pnl_usd))}\\)"
+            else:
+                pnl_str = "📊 _no avg price_"
+
+            dex_url = f"https://dexscreener.com/solana/{ca}"
+            lines.append(
+                f"*[{e(symbol)}]({dex_url})*\n"
+                f"  Qty: {e(f'{qty:,.2f}')} \\| Price: ${e(f'{current:.6g}')}\n"
+                f"  Value: {e(_fmt_usd(value))} \\| P&L: {pnl_str}\n"
+                f"  _Added {e(added_dt)}_"
+            )
+        else:
+            dex_url = f"https://dexscreener.com/solana/{ca}"
+            lines.append(
+                f"*[{e(symbol)}]({dex_url})*\n"
+                f"  Qty: {e(f'{qty:,.2f}')} \\| _Price unavailable_"
+            )
+
+    if any_price and total_value > 0:
+        lines.append(f"\n━━━━━━━━━━━━━━━━━━━")
+        lines.append(f"💼 *Total Value:* {e(_fmt_usd(total_value))}")
+        if total_cost > 0:
+            total_pnl_usd = total_value - total_cost
+            total_pnl_pct = ((total_value - total_cost) / total_cost) * 100
+            emoji = _pnl_emoji(total_pnl_pct)
+            lines.append(f"{emoji} *Total P&L:* {e(f'{total_pnl_pct:+.1f}%')} \\({e(_fmt_usd(total_pnl_usd))}\\)")
+
+    lines.append(f"\n_🕐 {e(datetime.now(timezone.utc).strftime('%H:%M UTC'))}_")
+    lines.append("_⚠️ DYOR\\. Not financial advice\\._")
+    return "\n".join(lines)
+
+
+def portfolio_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔄 Refresh", callback_data=f"portfolio|refresh|{user_id}"),
+        InlineKeyboardButton("🏠 Menu",    callback_data="menu|home"),
+    ]])
+
+
+# ─── Daily briefing job ────────────────────────────────────────────────────────
+
+async def daily_briefing_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Runs once per day at ~9am UTC.
+    Sends each chat a market briefing + portfolio snapshot for users who have holdings.
+    """
+    http: httpx.AsyncClient = context.bot_data["http"]
+    portfolios: dict        = context.bot_data.get("portfolios", {})
+    scan_prices: dict       = context.bot_data.get("scan_prices", {})
+
+    # ── Market briefing: top movers from leaderboard ──────────────────────────
+    from utils import build_leaderboard_text
+
+    # Send portfolio snapshot to each user who has one
+    for user_id_str, holdings in portfolios.items():
+        if not holdings:
+            continue
+        try:
+            user_id  = int(user_id_str)
+            snapshot = await build_portfolio_snapshot(user_id, http, context.bot_data)
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"🌅 *Good morning, Raggy\\!* Here's your daily bag check:\n\n{snapshot}",
+                parse_mode="MarkdownV2",
+                disable_web_page_preview=True,
+                reply_markup=portfolio_keyboard(user_id),
+            )
+            logger.info(f"Daily briefing sent to user {user_id}")
+        except Exception as e:
+            logger.warning(f"daily_briefing_job: failed for user {user_id_str}: {e}")

@@ -1,0 +1,398 @@
+"""
+proactive.py — Scuby's proactive alpha engine.
+
+Jobs that run in the background and push insights without being asked:
+  • Whale alert   — detects sudden large volume spikes on tracked tokens
+  • Rug watchdog  — if a tracked token's liquidity drops >50% suddenly, warn the chat
+  • Trending now  — every 4h, post the top 3 trending NEW Solana pairs
+                    (deduped — same token never shown twice in the same day)
+"""
+
+import asyncio
+import logging
+import time
+from datetime import datetime, timezone
+
+import httpx
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
+
+from utils import escape_md, safe_float, dex_get
+try:
+    from rate_limiter import dex_search_many as _dex_search_many_pro
+    _PRO_RATE_LIMITER = True
+except ImportError:
+    _PRO_RATE_LIMITER = False
+    _dex_search_many_pro = None
+
+logger = logging.getLogger(__name__)
+
+PROACTIVE_FILE         = "proactive_settings.json"
+WHALE_VOL_MULTIPLIER   = 5.0
+WHALE_MIN_VOL_USD      = 50_000
+LIQ_DROP_THRESHOLD     = 0.45
+TRENDING_INTERVAL_SECS = 4 * 3600
+
+import json, copy
+
+def load_proactive_settings() -> dict:
+    try:
+        with open(PROACTIVE_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_proactive_settings(s: dict) -> None:
+    try:
+        with open(PROACTIVE_FILE, "w") as f:
+            json.dump(s, f)
+    except Exception as e:
+        logger.warning(f"Could not save proactive settings: {e}")
+
+async def save_proactive_settings_async(s: dict) -> None:
+    await asyncio.to_thread(save_proactive_settings, copy.deepcopy(s))
+
+
+# ─── Rug watchdog ─────────────────────────────────────────────────────────────
+
+async def rug_watchdog_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    monitors: dict          = context.bot_data.get("monitors", {})
+    http: httpx.AsyncClient = context.bot_data["http"]
+    liq_cache: dict         = context.bot_data.setdefault("liq_cache", {})
+
+    all_cas: dict[str, list[str]] = {}
+    for chat_id_str, chat_monitors in monitors.items():
+        for m in chat_monitors:
+            all_cas.setdefault(m["ca"], []).append(chat_id_str)
+
+    if not all_cas:
+        return
+
+    try:
+        cas_str = ",".join(list(all_cas.keys())[:30])
+        data    = await dex_get(http, f"https://api.dexscreener.com/latest/dex/tokens/{cas_str}")
+        pairs   = [p for p in (data.get("pairs") or []) if p.get("chainId") == "solana"]
+    except Exception as ex:
+        logger.debug(f"rug_watchdog_job fetch failed: {ex}")
+        return
+
+    e = escape_md
+    for pair in pairs:
+        ca      = pair.get("baseToken", {}).get("address", "")
+        symbol  = pair.get("baseToken", {}).get("symbol", "?")
+        liq     = safe_float((pair.get("liquidity") or {}).get("usd", 0))
+        prev    = liq_cache.get(ca)
+
+        rug_confirm: dict = context.bot_data.setdefault("rug_confirm", {})
+        if prev and prev > 5000 and liq > 500:
+            drop_pct = (prev - liq) / prev
+            drop_abs = prev - liq
+            if drop_pct >= LIQ_DROP_THRESHOLD and drop_abs >= 2000:
+                rug_confirm[ca] = rug_confirm.get(ca, 0) + 1
+            else:
+                rug_confirm[ca] = 0
+
+            if rug_confirm.get(ca, 0) < 2:
+                if liq > 0:
+                    liq_cache[ca] = liq
+                continue
+
+            if rug_confirm.get(ca, 0) >= 2:
+                rug_confirm[ca] = 0
+                dex_url = f"https://dexscreener.com/solana/{ca}"
+                text = (
+                    f"🚨 *RUG ALERT — {e(symbol)}*\n\n"
+                    f"Liquidity just dropped *{e(f'{drop_pct*100:.0f}')}%* in the last few minutes\\!\n\n"
+                    f"💧 Was: ${e(f'{prev:,.0f}')} → Now: ${e(f'{liq:,.0f}')}\n\n"
+                    f"_Scuby smells something fishy, Raggy\\! This could be a rug\\._\n\n"
+                    f"[Check DexScreener]({dex_url})\n\n"
+                    f"_⚠️ DYOR\\. Not financial advice\\._"
+                )
+                keyboard = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔍 Check token", callback_data=f"og|ca|{ca}"),
+                    InlineKeyboardButton("🔄 Refresh liq", callback_data=f"refreshpair|{ca}"),
+                ]])
+                for chat_id_str in all_cas.get(ca, []):
+                    try:
+                        await context.bot.send_message(
+                            chat_id=int(chat_id_str),
+                            text=text,
+                            parse_mode="MarkdownV2",
+                            disable_web_page_preview=True,
+                            reply_markup=keyboard,
+                        )
+                        logger.warning(f"Rug alert sent: {symbol} liq drop {drop_pct*100:.0f}% in chat {chat_id_str}")
+                    except Exception as send_err:
+                        logger.debug(f"rug_watchdog send failed: {send_err}")
+
+        if liq > 500:
+            liq_cache[ca] = liq
+
+
+# ─── Whale alert ──────────────────────────────────────────────────────────────
+
+async def whale_alert_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    monitors: dict          = context.bot_data.get("monitors", {})
+    http: httpx.AsyncClient = context.bot_data["http"]
+    vol_cache: dict         = context.bot_data.setdefault("vol_cache", {})
+    whale_fired: set        = context.bot_data.setdefault("whale_fired", set())
+
+    all_cas: dict[str, list[str]] = {}
+    for chat_id_str, chat_monitors in monitors.items():
+        for m in chat_monitors:
+            all_cas.setdefault(m["ca"], []).append(chat_id_str)
+
+    if not all_cas:
+        return
+
+    try:
+        cas_str = ",".join(list(all_cas.keys())[:30])
+        data    = await dex_get(http, f"https://api.dexscreener.com/latest/dex/tokens/{cas_str}")
+        pairs   = [p for p in (data.get("pairs") or []) if p.get("chainId") == "solana"]
+    except Exception as ex:
+        logger.debug(f"whale_alert_job fetch failed: {ex}")
+        return
+
+    e   = escape_md
+    now = time.time()
+
+    for pair in pairs:
+        ca      = pair.get("baseToken", {}).get("address", "")
+        symbol  = pair.get("baseToken", {}).get("symbol", "?")
+        vol_5m  = safe_float((pair.get("volume") or {}).get("m5", 0))
+        vol_1h  = safe_float((pair.get("volume") or {}).get("h1", 0))
+        price   = pair.get("priceUsd") or "?"
+        mcap    = safe_float(pair.get("marketCap") or pair.get("fdv") or 0)
+        h1      = safe_float((pair.get("priceChange") or {}).get("h1", 0))
+
+        expected_5m = vol_1h / 12 if vol_1h > 0 else 0
+        fire_key    = f"whale:{ca}:{int(now // 300)}"
+
+        if (
+            vol_5m >= WHALE_MIN_VOL_USD
+            and expected_5m > 0
+            and vol_5m >= expected_5m * WHALE_VOL_MULTIPLIER
+            and fire_key not in whale_fired
+        ):
+            dex_url = f"https://dexscreener.com/solana/{ca}"
+            text = (
+                f"🐋 *Whale Alert — {e(symbol)}\\!*\n\n"
+                f"Zoinks\\! Huge volume spike detected in the last 5 minutes\\!\n\n"
+                f"📊 5m Vol: *${e(f'{vol_5m:,.0f}')}* "
+                f"\\({e(f'{vol_5m/expected_5m:.1f}')}x normal\\)\n"
+                f"💰 Price: ${e(str(price))}\n"
+                f"📈 1h change: {e(f'{h1:+.1f}')}%\n"
+                f"💎 MCap: ${e(f'{mcap:,.0f}')}\n\n"
+                f"_Something big is happening, Raggy\\!_\n\n"
+                f"[DexScreener]({dex_url})\n\n"
+                f"_⚠️ DYOR\\. Not financial advice\\._"
+            )
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔍 Sniff OG", callback_data=f"og|ca|{ca}"),
+                InlineKeyboardButton("🔄 Refresh",  callback_data=f"refreshpair|{ca}"),
+            ]])
+            for chat_id_str in all_cas.get(ca, []):
+                try:
+                    await context.bot.send_message(
+                        chat_id=int(chat_id_str),
+                        text=text,
+                        parse_mode="MarkdownV2",
+                        disable_web_page_preview=True,
+                        reply_markup=keyboard,
+                    )
+                    whale_fired.add(fire_key)
+                    logger.info(f"Whale alert: {symbol} {vol_5m/expected_5m:.1f}x vol spike in {chat_id_str}")
+                except Exception as send_err:
+                    logger.debug(f"whale_alert send failed: {send_err}")
+
+        vol_cache[ca] = {"vol_1h": vol_1h, "ts": now}
+
+    context.bot_data["whale_fired"] = {k for k in whale_fired if int(k.split(":")[-1]) > int(now // 300) - 12}
+
+
+# ─── Trending now (FIXED — deduped, rotates tokens, never repeats same day) ──
+
+async def trending_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Every 4 hours, post the top trending NEW Solana pairs to active chats.
+
+    FIXES vs original:
+    - trending_shown: set of CAs already posted — never repeats the same token
+    - trending_shown resets daily at midnight UTC so fresh tokens surface each day
+    - Scores tokens and skips any already shown this cycle
+    - Falls back to top-10 pool and picks the first 3 not yet shown
+    """
+    feeds:         dict = context.bot_data.get("feeds", {})
+    smart_filters: dict = context.bot_data.get("smart_filters", {})
+    http: httpx.AsyncClient = context.bot_data["http"]
+
+    active_chats = set(feeds.keys()) | set(smart_filters.keys())
+    if not active_chats:
+        return
+
+    # ── Dedup state ───────────────────────────────────────────────────────────
+    trending_state: dict = context.bot_data.setdefault("trending_state", {
+        "shown_cas": [],
+        "reset_day": -1,
+    })
+
+    # Reset daily
+    today = datetime.now(timezone.utc).timetuple().tm_yday
+    if trending_state["reset_day"] != today:
+        trending_state["shown_cas"] = []
+        trending_state["reset_day"] = today
+        logger.info("trending_job: daily reset of shown_cas")
+
+    shown_set: set[str] = set(trending_state["shown_cas"])
+
+    # ── Fetch pairs ───────────────────────────────────────────────────────────
+    TRENDING_QUERIES = list("abcdefghijklmnopqrstuvwxyz") + [
+        "pepe", "inu", "doge", "pump", "moon", "gem", "chad", "based",
+        "king", "bonk", "frog", "cat", "dog", "ai", "gpt", "elon",
+    ]
+
+    EXCLUDE_SYMBOLS = {
+        "sol", "wsol", "solana", "usdc", "usdt", "eth", "btc",
+        "weth", "wbtc", "wrapped", "ray", "jup", "msol", "jsol",
+    }
+
+    async def _safe_search(q: str) -> list[dict]:
+        try:
+            data = await dex_get(
+                http,
+                "https://api.dexscreener.com/latest/dex/search",
+                params={"q": q},
+            )
+            return [p for p in (data.get("pairs") or []) if p.get("chainId") == "solana"]
+        except Exception:
+            return []
+
+    if _PRO_RATE_LIMITER and _dex_search_many_pro is not None:
+        all_pairs_raw = await _dex_search_many_pro(http, TRENDING_QUERIES, chunk_size=6)
+        results = [all_pairs_raw]   # flat list wrapped so dedup loop below still works
+    else:
+        results = await asyncio.gather(*[_safe_search(q) for q in TRENDING_QUERIES])
+    all_pairs: list[dict] = []
+    seen_cas:  set[str]   = set()
+    now_ms = time.time() * 1000
+
+    for chunk in results:
+        for p in chunk:
+            ca  = p.get("baseToken", {}).get("address", "")
+            sym = p.get("baseToken", {}).get("symbol", "").lower()
+            nm  = p.get("baseToken", {}).get("name", "").lower()
+            if not ca or ca in seen_cas:
+                continue
+            if sym in EXCLUDE_SYMBOLS or "solana" in nm:
+                continue
+            seen_cas.add(ca)
+            all_pairs.append(p)
+
+    if not all_pairs:
+        return
+
+    # ── Score all pairs ───────────────────────────────────────────────────────
+    def _score(p: dict) -> float:
+        vol1h = safe_float((p.get("volume") or {}).get("h1", 0))
+        mcap  = safe_float(p.get("marketCap") or p.get("fdv") or 1)
+        h1    = safe_float((p.get("priceChange") or {}).get("h1", 0))
+        liq   = safe_float((p.get("liquidity") or {}).get("usd", 0))
+        age_h = (now_ms - (p.get("pairCreatedAt") or now_ms)) / 3_600_000
+        if liq < 5000 or mcap <= 0:
+            return 0
+        vol_ratio  = vol1h / mcap
+        age_bonus  = max(0, 1 - age_h / 24)
+        return vol_ratio * (1 + h1 / 100) * (1 + age_bonus)
+
+    scored = sorted(all_pairs, key=_score, reverse=True)
+
+    # ── Pick top 3 not already shown today ───────────────────────────────────
+    top3 = []
+    for p in scored:
+        if len(top3) >= 3:
+            break
+        ca  = p.get("baseToken", {}).get("address", "")
+        liq = safe_float((p.get("liquidity") or {}).get("usd", 0))
+        if liq < 5000:
+            continue
+        if ca in shown_set:
+            continue
+        top3.append(p)
+
+    # If everything has been shown (unlikely but possible), reset and retry
+    if not top3:
+        logger.info("trending_job: all candidates shown today — resetting dedup")
+        trending_state["shown_cas"] = []
+        shown_set = set()
+        for p in scored:
+            if len(top3) >= 3:
+                break
+            liq = safe_float((p.get("liquidity") or {}).get("usd", 0))
+            if liq >= 5000:
+                top3.append(p)
+
+    if not top3:
+        return
+
+    # ── Build message ─────────────────────────────────────────────────────────
+    e       = escape_md
+    now_str = datetime.now(timezone.utc).strftime("%H:%M UTC")
+    lines   = [f"🔥 *Scuby's Trending Now — {e(now_str)}*\n_Hottest NEW Solana pairs right now_\n"]
+
+    for i, pair in enumerate(top3, 1):
+        ca      = pair.get("baseToken", {}).get("address", "?")
+        symbol  = pair.get("baseToken", {}).get("symbol", "?")
+        name    = pair.get("baseToken", {}).get("name", "?")
+        vol1h   = safe_float((pair.get("volume") or {}).get("h1", 0))
+        mcap    = safe_float(pair.get("marketCap") or pair.get("fdv") or 0)
+        h1      = safe_float((pair.get("priceChange") or {}).get("h1", 0))
+        liq     = safe_float((pair.get("liquidity") or {}).get("usd", 0))
+        age_h   = (now_ms - (pair.get("pairCreatedAt") or now_ms)) / 3_600_000
+        dex_url = f"https://dexscreener.com/solana/{ca}"
+        medal   = ["🥇", "🥈", "🥉"][i - 1]
+        lines.append(
+            f"{medal} *[{e(symbol)}]({dex_url})* — {e(name)}\n"
+            f"  📈 {e(f'{h1:+.1f}')}% 1h \\| 💧 ${e(f'{liq:,.0f}')} liq\n"
+            f"  📊 ${e(f'{vol1h:,.0f}')} vol 1h \\| 🕐 {e(f'{age_h:.1f}')}h old"
+        )
+
+    lines.append("\n_⚠️ DYOR, Raggy\\. Not financial advice\\._")
+    text = "\n".join(lines)
+
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            f"🔍 Sniff #{i + 1}",
+            callback_data=f"og|ca|{top3[i].get('baseToken', {}).get('address', '')}",
+        )
+        for i in range(len(top3))
+    ]])
+
+    # ── Send to active chats ──────────────────────────────────────────────────
+    sent_any = False
+    for chat_id_str in active_chats:
+        try:
+            await context.bot.send_message(
+                chat_id=int(chat_id_str),
+                text=text,
+                parse_mode="MarkdownV2",
+                disable_web_page_preview=True,
+                reply_markup=keyboard,
+            )
+            sent_any = True
+        except Exception as send_err:
+            logger.debug(f"trending_job send failed to {chat_id_str}: {send_err}")
+
+    # ── Mark as shown only after successfully sending ─────────────────────────
+    if sent_any:
+        for pair in top3:
+            ca = pair.get("baseToken", {}).get("address", "")
+            if ca and ca not in shown_set:
+                trending_state["shown_cas"].append(ca)
+                shown_set.add(ca)
+        # Cap the shown list to last 200 entries
+        if len(trending_state["shown_cas"]) > 200:
+            trending_state["shown_cas"] = trending_state["shown_cas"][-200:]
+        logger.info(
+            f"trending_job: posted {len(top3)} tokens, "
+            f"{len(trending_state['shown_cas'])} total shown today"
+        )

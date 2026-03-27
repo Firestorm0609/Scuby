@@ -1,0 +1,201 @@
+"""
+main_upgraded.py — DIFF / ADDITIONS for main.py
+
+This file shows exactly what to ADD to your existing main.py to wire in:
+  1. Wallet tracker (wallet_tracker.py)
+  2. Autofilter callback (handlers_ai_addition.py)
+  3. Memory additions (memory_additions.py)
+  4. Menu updates for wallet tracking
+
+────────────────────────────────────────────────────────────────
+STEP 1: Add these imports near the top of main.py
+────────────────────────────────────────────────────────────────
+"""
+
+# ADD to imports in main.py:
+IMPORT_ADDITIONS = """
+from handlers_ai_addition import (
+    handle_ask,
+    handle_clearchat,
+    handle_clearchat_button,
+    handle_smartwatch,
+    handle_smartwatches,
+    handle_unsmartwatch,
+    handle_delsmartwatch_button,
+    handle_autofilter_button,   # NEW
+)
+
+from wallet_tracker import (
+    handle_trackwallet,          # NEW
+    handle_wallets,              # NEW
+    handle_untrackwallet,        # NEW
+    handle_delwallet_button,     # NEW
+    wallet_scan_job,             # NEW
+    load_wallets,                # NEW
+    WALLET_POLL_INTERVAL,        # NEW
+)
+"""
+
+"""
+────────────────────────────────────────────────────────────────
+STEP 2: Add these lines to post_init(), after existing load lines
+────────────────────────────────────────────────────────────────
+
+    application.bot_data["tracked_wallets"] = load_wallets()
+    application.bot_data["global_pool"]     = {"tokens": {}, "contributed_tokens": 0}
+
+────────────────────────────────────────────────────────────────
+STEP 3: Add this line to the job_queue section in post_init()
+────────────────────────────────────────────────────────────────
+
+    jq.run_repeating(wallet_scan_job, interval=WALLET_POLL_INTERVAL, first=90)
+
+────────────────────────────────────────────────────────────────
+STEP 4: Add these command handlers in main()
+────────────────────────────────────────────────────────────────
+
+    app.add_handler(CommandHandler("trackwallet",   handle_trackwallet))
+    app.add_handler(CommandHandler("wallets",        handle_wallets))
+    app.add_handler(CommandHandler("untrackwallet",  handle_untrackwallet))
+
+────────────────────────────────────────────────────────────────
+STEP 5: Add these callback handlers in main()
+────────────────────────────────────────────────────────────────
+
+    app.add_handler(CallbackQueryHandler(handle_delwallet_button,   pattern=r"^delwallet\\|"))
+    app.add_handler(CallbackQueryHandler(handle_autofilter_button,  pattern=r"^autofilter\\|"))
+
+────────────────────────────────────────────────────────────────
+STEP 6: Append memory_additions.py to memory.py
+────────────────────────────────────────────────────────────────
+
+Run this in your project root:
+    cat memory_additions.py >> memory.py
+
+Or manually paste all functions from memory_additions.py
+to the bottom of memory.py (before the final newline).
+
+────────────────────────────────────────────────────────────────
+STEP 7: Add /wallets to main_menu_keyboard() in utils.py
+────────────────────────────────────────────────────────────────
+
+In utils.py, find main_menu_keyboard() and add a new row:
+
+    [
+        InlineKeyboardButton("🐋 Wallets",   callback_data="menu|wallets"),
+        InlineKeyboardButton("🧠 Patterns",  callback_data="menu|patterns"),
+    ],
+
+────────────────────────────────────────────────────────────────
+STEP 8: Handle menu|wallets and menu|patterns in handle_menu_button
+────────────────────────────────────────────────────────────────
+
+In handlers.py, inside handle_menu_button(), add:
+
+    elif action == "wallets":
+        from wallet_tracker import handle_wallets
+        # Redirect to the full wallets handler
+        chat_id      = str(query.message.chat.id) if query.message else None
+        wallets      = context.bot_data.get("tracked_wallets", {})
+        chat_wallets = wallets.get(chat_id, []) if chat_id else []
+        if not chat_wallets:
+            await query.edit_message_text(
+                "🐋 Not tracking any wallets yet\\!\\n\\nStart with:\\n`/trackwallet <address> [label]`",
+                parse_mode="MarkdownV2",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🏠 Main Menu", callback_data="menu|home")
+                ]]),
+            )
+        else:
+            e     = escape_md
+            lines = ["🐋 *Tracked wallets:*\\n"]
+            for w in chat_wallets:
+                lbl = e(w.get("label") or w["address"][:12] + "...")
+                lines.append(f"• {lbl}")
+            rows = [[InlineKeyboardButton(
+                f"❌ {(w.get('label') or w['address'][:12] + '...')[:30]}",
+                callback_data=f"delwallet|{w['id']}",
+            )] for w in chat_wallets]
+            rows.append([InlineKeyboardButton("🏠 Main Menu", callback_data="menu|home")])
+            await query.edit_message_text(
+                "\\n".join(lines), parse_mode="MarkdownV2",
+                reply_markup=InlineKeyboardMarkup(rows),
+            )
+
+    elif action == "patterns":
+        await query.edit_message_text("Loading patterns...\\nUse /patterns for the full view\\! 🐾")
+
+────────────────────────────────────────────────────────────────
+STEP 9: Fix missing import in jobs.py
+────────────────────────────────────────────────────────────────
+
+Add this import at the top of jobs.py (it's missing!):
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+────────────────────────────────────────────────────────────────
+STEP 10: Fix /portfolio command not registered in main.py
+────────────────────────────────────────────────────────────────
+
+In handlers.py, add this handler (it exists as an intent but not a /command):
+
+async def handle_portfolio_command(update, context):
+    if not update.message or not update.effective_user:
+        return
+    from portfolio import build_portfolio_snapshot, portfolio_keyboard
+    user_id = update.effective_user.id
+    http    = context.bot_data["http"]
+    msg = await update.message.reply_text("🐾 Fetching your bag, Raggy...", parse_mode="MarkdownV2")
+    try:
+        text = await build_portfolio_snapshot(user_id, http, context.bot_data)
+        await msg.edit_text(
+            text, parse_mode="MarkdownV2",
+            disable_web_page_preview=True,
+            reply_markup=portfolio_keyboard(user_id),
+        )
+    except Exception as ex:
+        await msg.edit_text("Zoinks! Couldn't load portfolio. Try again!")
+
+Then in main(), add:
+    app.add_handler(CommandHandler("portfolio",  handle_portfolio_command))
+    app.add_handler(CommandHandler("addtoken",   handle_addtoken_command))   # optional
+"""
+
+
+# ─── Quick install script ────────────────────────────────────────────────────
+
+INSTALL_SCRIPT = """#!/bin/bash
+# install_upgrades.sh — run from project root to apply all upgrades
+
+set -e
+
+echo "Scooby Upgrade Script v2"
+echo "========================"
+
+# Step 1: Copy new/upgraded files
+echo "Copying upgraded files..."
+cp gemscore.py gemscore.py.bak 2>/dev/null || true
+cp gemscore_upgraded.py gemscore.py
+
+cp handlers_ai_addition_new.py handlers_ai_addition.py
+
+# Step 2: Append memory additions
+echo "Patching memory.py..."
+echo "" >> memory.py
+cat memory_additions.py >> memory.py
+
+# Step 3: Copy wallet tracker
+cp wallet_tracker.py wallet_tracker.py
+
+echo ""
+echo "Manual steps required:"
+echo "  1. Add wallet_tracker imports to main.py (see main_upgraded.py)"
+echo "  2. Register wallet commands in main.py (see main_upgraded.py)"
+echo "  3. Add 'from telegram import InlineKeyboardButton, InlineKeyboardMarkup' to jobs.py"
+echo "  4. Add wallet_scan_job to post_init() job queue"
+echo ""
+echo "Done! Restart Scooby: python main.py"
+"""
+
+if __name__ == "__main__":
+    print(INSTALL_SCRIPT)

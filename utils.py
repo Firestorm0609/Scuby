@@ -1,0 +1,959 @@
+"""
+utils.py — shared helpers, persistence, API calls, formatters, keyboards, cache.
+Nothing in this file imports from handlers.py, jobs.py, or main.py.
+"""
+
+import random as _random
+import asyncio
+import copy
+import json
+import os
+import re
+import time
+import logging
+from datetime import datetime, timezone
+
+import httpx
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+logger = logging.getLogger(__name__)
+
+# ─── Constants ────────────────────────────────────────────────────────────────
+
+SOLANA_CA_PATTERN = re.compile(r'(?<!\w)[1-9A-HJ-NP-Za-km-z]{32,44}(?!\w)')
+TICKER_PATTERN    = re.compile(r'\$([A-Za-z]{2,10})\b')
+VALID_CA          = re.compile(r'^[1-9A-HJ-NP-Za-km-z]{32,44}$')
+VALID_TICKER      = re.compile(r'^[A-Z]{2,10}$')
+
+CHAT_COOLDOWN          = 2
+USER_COOLDOWN          = 5
+VERSIONS_CACHE_TTL     = 600
+VERSIONS_CACHE_MAX     = 100
+CALLBACK_USER_COOLDOWN = 2
+
+SCAN_PRICES_FILE = "scan_prices.json"
+STATS_FILE       = "stats.json"
+ALERTS_FILE      = "alerts.json"
+MONITORS_FILE    = "monitors.json"
+WATCHLIST_FILE   = "watchlist.json"
+
+LEADERBOARD_SIZE      = 10
+LEADERBOARD_CACHE_TTL = 120
+LEADERBOARD_MAX_CAS   = 200
+ALERT_POLL_INTERVAL   = 60
+MAX_ALERTS_PER_USER   = 10
+
+WATCH_POLL_INTERVAL  = 120
+WATCH_MIN_LIQUIDITY  = 1000
+WATCH_MAX_AGE_HOURS  = 1
+MAX_WATCHES_PER_CHAT = 10
+
+MONITOR_POLL_INTERVAL = 60
+MAX_MONITORS_PER_CHAT = 5
+MONITOR_MIN_INTERVAL  = 60
+MONITOR_MAX_INTERVAL  = 3600
+
+
+# ─── Shared HTTP client ───────────────────────────────────────────────────────
+
+def make_http_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        timeout=15,
+        limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+    )
+
+
+# ─── Markdown escaping ────────────────────────────────────────────────────────
+
+def escape_md(text: str) -> str:
+    text = str(text).replace('\\', '\\\\')
+    return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', text)
+
+
+# ─── Safe numeric coercion ────────────────────────────────────────────────────
+
+def safe_float(val, default: float = 0.0) -> float:
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
+
+# ─── Name similarity ──────────────────────────────────────────────────────────
+
+_STOP_WORDS = {"the", "a", "an", "of", "in", "and"}
+
+
+def _name_words(name: str) -> set[str]:
+    words = re.findall(r'[a-z0-9]+', name.lower())
+    return {w for w in words if w not in _STOP_WORDS}
+
+
+def _names_are_related(name_a: str, name_b: str) -> bool:
+    if not name_a or not name_b:
+        return True
+    return bool(_name_words(name_a) & _name_words(name_b))
+
+
+# ─── Persistence: scan prices ─────────────────────────────────────────────────
+
+def load_scan_prices() -> dict:
+    try:
+        with open(SCAN_PRICES_FILE, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_scan_prices(scan_prices: dict) -> None:
+    try:
+        with open(SCAN_PRICES_FILE, "w") as f:
+            json.dump(scan_prices, f)
+    except Exception as e:
+        logger.warning(f"Could not save scan_prices: {e}")
+
+
+async def save_scan_prices_async(scan_prices: dict) -> None:
+    await asyncio.to_thread(save_scan_prices, scan_prices.copy())
+
+
+# ─── Persistence: stats ───────────────────────────────────────────────────────
+
+def load_stats() -> dict:
+    try:
+        with open(STATS_FILE, "r") as f:
+            data = json.load(f)
+        return {
+            "chats": set(data.get("chats", [])),
+            "users": set(data.get("users", [])),
+        }
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"chats": set(), "users": set()}
+
+
+def save_stats(stats: dict) -> None:
+    try:
+        with open(STATS_FILE, "w") as f:
+            json.dump({
+                "chats": list(stats.get("chats", set())),
+                "users": list(stats.get("users", set())),
+            }, f)
+    except Exception as e:
+        logger.warning(f"Could not save stats: {e}")
+
+
+async def save_stats_async(stats: dict) -> None:
+    await asyncio.to_thread(save_stats, {
+        "chats": set(stats.get("chats", set())),
+        "users": set(stats.get("users", set())),
+    })
+
+
+# ─── Persistence: alerts ──────────────────────────────────────────────────────
+
+def load_alerts() -> dict:
+    try:
+        with open(ALERTS_FILE, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_alerts(alerts: dict) -> None:
+    try:
+        with open(ALERTS_FILE, "w") as f:
+            json.dump(alerts, f)
+    except Exception as e:
+        logger.warning(f"Could not save alerts: {e}")
+
+
+async def save_alerts_async(alerts: dict) -> None:
+    await asyncio.to_thread(save_alerts, copy.deepcopy(alerts))
+
+
+# ─── Persistence: monitors ────────────────────────────────────────────────────
+
+def load_monitors() -> dict:
+    try:
+        with open(MONITORS_FILE, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_monitors(monitors: dict) -> None:
+    try:
+        with open(MONITORS_FILE, "w") as f:
+            json.dump(monitors, f)
+    except Exception as e:
+        logger.warning(f"Could not save monitors: {e}")
+
+
+async def save_monitors_async(monitors: dict) -> None:
+    await asyncio.to_thread(save_monitors, copy.deepcopy(monitors))
+
+
+# ─── Persistence: watchlist ───────────────────────────────────────────────────
+
+def load_watchlist() -> dict:
+    try:
+        with open(WATCHLIST_FILE, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_watchlist(watchlist: dict) -> None:
+    try:
+        with open(WATCHLIST_FILE, "w") as f:
+            json.dump(watchlist, f)
+    except Exception as e:
+        logger.warning(f"Could not save watchlist: {e}")
+
+
+async def save_watchlist_async(watchlist: dict) -> None:
+    await asyncio.to_thread(save_watchlist, copy.deepcopy(watchlist))
+
+
+# ─── Scan price recording ─────────────────────────────────────────────────────
+
+def record_scan_prices(pairs: list[dict], scan_prices: dict, scanned_by: str = "", chat_id: str = "") -> bool:
+    added = False
+    for pair in pairs:
+        ca = pair.get("baseToken", {}).get("address", "")
+        if not ca or ca in scan_prices:
+            continue
+        price = safe_float(pair.get("priceUsd", 0))
+        if price > 0:
+            scan_prices[ca] = {
+                "price":      price,
+                "ts":         time.time(),
+                "symbol":     pair.get("baseToken", {}).get("symbol", ""),
+                "scanned_by": scanned_by,
+                "chat_id":    chat_id,
+            }
+            added = True
+    return added
+
+
+# ─── DexScreener API ──────────────────────────────────────────────────────────
+
+async def dex_get(http: httpx.AsyncClient, url: str, params: dict | None = None) -> dict:
+    """Fetch a DexScreener endpoint with 429 backoff. Returns {} on persistent failure."""
+    for _attempt in range(3):
+        try:
+            resp = await http.get(url, params=params)
+            if resp.status_code == 429:
+                _wait = 4.0 * (2 ** _attempt)
+                logger.warning(f"DexScreener 429 on {url} — backoff {_wait:.0f}s (attempt {_attempt+1}/3)")
+                if _attempt < 2:
+                    await asyncio.sleep(_wait)
+                    continue
+                return {}
+            resp.raise_for_status()
+            data = resp.json()
+            return data if isinstance(data, dict) else {}
+        except httpx.HTTPStatusError as _exc:
+            if _exc.response.status_code == 429 and _attempt < 2:
+                await asyncio.sleep(4.0 * (2 ** _attempt))
+                continue
+            logger.warning(f"dex_get HTTP error for {url}: {_exc}")
+            return {}
+        except Exception as _exc:
+            logger.warning(f"dex_get failed for {url}: {_exc}")
+            return {}
+    return {}
+
+
+async def _search_all_versions(
+    http: httpx.AsyncClient,
+    symbol: str,
+    name: str = "",
+    filter_by_name: bool = False,
+) -> list[dict]:
+    symbol_upper    = symbol.upper()
+    symbol_variants = {symbol_upper}
+    if symbol != symbol_upper:
+        symbol_variants.add(symbol)
+
+    queries = list(symbol_variants)
+    if name and name.strip().lower() != symbol.strip().lower():
+        queries.append(name)
+
+    async def _safe_get(q: str) -> dict:
+        try:
+            return await dex_get(
+                http,
+                "https://api.dexscreener.com/latest/dex/search",
+                params={"q": q},
+            )
+        except Exception as e:
+            logger.warning(f"_search_all_versions: query {q!r} failed: {e}")
+            return {}
+
+    results = await asyncio.gather(*[_safe_get(q) for q in queries])
+
+    seen: dict[str, dict] = {}
+    for data in results:
+        for p in data.get("pairs", []) or []:
+            if p.get("chainId") != "solana":
+                continue
+            base = p.get("baseToken", {})
+            if base.get("symbol", "").upper() != symbol_upper:
+                continue
+            result_name = base.get("name", "")
+            if filter_by_name and name and not _names_are_related(name, result_name):
+                logger.info(f"Filtered unrelated token: {result_name!r} (no shared words with {name!r})")
+                continue
+            ca_addr = base.get("address", "")
+            if ca_addr and ca_addr not in seen:
+                seen[ca_addr] = p
+
+    logger.info(
+        f"_search_all_versions: symbol={symbol!r} name={name!r} "
+        f"filter_by_name={filter_by_name} -> {len(seen)} unique pair(s)"
+    )
+    return list(seen.values())
+
+
+async def get_all_by_ticker(ticker: str, http: httpx.AsyncClient) -> list[dict]:
+    return await _search_all_versions(http, ticker)
+
+
+async def get_all_by_ca(ca: str, http: httpx.AsyncClient) -> list[dict]:
+    data  = await dex_get(http, f"https://api.dexscreener.com/latest/dex/tokens/{ca}")
+    pairs = [p for p in data.get("pairs", []) or [] if p.get("chainId") == "solana"]
+    if not pairs:
+        return []
+    base   = pairs[0].get("baseToken", {})
+    symbol = base.get("symbol", "")
+    name   = base.get("name", "")
+    if not symbol:
+        return pairs
+    results = await _search_all_versions(http, symbol, name, filter_by_name=True)
+    return results if results else pairs
+
+
+async def resolve_symbol_for_ca(ca: str, http: httpx.AsyncClient) -> str | None:
+    try:
+        data  = await dex_get(http, f"https://api.dexscreener.com/latest/dex/tokens/{ca}")
+        pairs = [p for p in data.get("pairs", []) or [] if p.get("chainId") == "solana"]
+        if pairs:
+            return pairs[0].get("baseToken", {}).get("symbol") or None
+    except Exception as e:
+        logger.warning(f"resolve_symbol_for_ca failed: {e}")
+    return None
+
+
+async def fetch_current_prices(cas: list[str], http: httpx.AsyncClient) -> dict[str, float]:
+    prices: dict[str, float] = {}
+    batch_size = 30
+    for i in range(0, len(cas), batch_size):
+        batch = cas[i:i + batch_size]
+        try:
+            data = await dex_get(
+                http,
+                f"https://api.dexscreener.com/latest/dex/tokens/{','.join(batch)}",
+            )
+            for pair in data.get("pairs", []) or []:
+                if pair.get("chainId") != "solana":
+                    continue
+                ca    = pair.get("baseToken", {}).get("address", "")
+                price = safe_float(pair.get("priceUsd") or 0)
+                if ca and price > 0 and ca not in prices:
+                    prices[ca] = price
+        except Exception as e:
+            logger.warning(f"fetch_current_prices batch {i}–{i+batch_size} failed: {e}")
+    return prices
+
+
+# ─── Rugcheck ─────────────────────────────────────────────────────────────────
+
+async def fetch_rugcheck(ca: str, http: httpx.AsyncClient) -> dict:
+    try:
+        resp = await http.get(
+            f"https://api.rugcheck.xyz/v1/tokens/{ca}/report/summary",
+            timeout=8,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        logger.warning(f"Rugcheck fetch failed for {ca}: {e}")
+        return {}
+
+
+def parse_risk_badge(report: dict) -> str:
+    if not report:
+        return ""
+    score  = safe_float(report.get("score", 0))
+    risks  = report.get("risks", []) or []
+    levels = {r.get("level", "").lower() for r in risks}
+    note   = "_\\(rug risk only \\-\\- not a buy signal\\)_"
+    if "danger" in levels or score >= 700:
+        return f"\U0001f6a8 *Rug Risk: HIGH* \\-\\- possible rug or honeypot\n{note}"
+    elif "warn" in levels or score >= 300:
+        return f"\u26a0\ufe0f *Rug Risk: MEDIUM* \\-\\- some red flags detected\n{note}"
+    else:
+        return f"\u2705 *Rug Risk: LOW* \\-\\- no major issues found\n{note}"
+
+
+# ─── Performance labels ───────────────────────────────────────────────────────
+
+def _calc_perf_label(multiple: float) -> str:
+    if multiple >= 3.0:
+        return f"\U0001f315 {multiple:.1f}x"
+    elif multiple >= 2.0:
+        return f"\U0001f680 {multiple:.1f}x"
+    elif multiple >= 1.2:
+        return f"\U0001f4c8 +{(multiple - 1) * 100:.0f}%"
+    elif multiple >= 0.9:
+        return "\u27a1\ufe0f Flat"
+    elif multiple >= 0.5:
+        return f"\U0001f4c9 {(multiple - 1) * 100:.0f}%"
+    else:
+        return f"\U0001f480 {(multiple - 1) * 100:.0f}%"
+
+
+def price_movement_line(pair: dict, scan_prices: dict) -> str:
+    e             = escape_md
+    ca            = pair.get("baseToken", {}).get("address", "")
+    current_price = safe_float(pair.get("priceUsd") or 0)
+    entry         = scan_prices.get(ca)
+
+    if entry and entry.get("price", 0) > 0 and current_price > 0:
+        multiple  = current_price / entry["price"]
+        label     = _calc_perf_label(multiple)
+        scan_dt   = datetime.fromtimestamp(entry["ts"], tz=timezone.utc)
+        scan_str  = scan_dt.strftime("%b %d, %H:%M UTC")
+        by_str    = f" by {e(entry['scanned_by'])}" if entry.get("scanned_by") else ""
+        return f"\U0001f4b9 *Since first scan* \\({e(scan_str)}{by_str}\\): {e(label)}"
+    else:
+        h24      = safe_float(pair.get("priceChange", {}).get("h24", 0))
+        h1       = safe_float(pair.get("priceChange", {}).get("h1",  0))
+        label    = _calc_perf_label(1 + h24 / 100)
+        return (
+            f"\U0001f4b9 *24h perf* _\\(scan price not recorded yet\\)_: "
+            f"{e(label)} \\(1h: {e(f'{h1:+.1f}')}%\\)"
+        )
+
+
+# ─── Token formatting ─────────────────────────────────────────────────────────
+
+def _pair_stats_block(pair: dict) -> str:
+    e      = escape_md
+    ca     = pair.get("baseToken", {}).get("address", "?")
+    fdv    = safe_float(pair.get("fdv"))
+    liq    = safe_float(pair.get("liquidity", {}).get("usd"))
+    vol24  = safe_float(pair.get("volume", {}).get("h24"))
+    vol1h  = safe_float(pair.get("volume", {}).get("h1"))
+    h1     = safe_float(pair.get("priceChange", {}).get("h1",  0))
+    h24    = safe_float(pair.get("priceChange", {}).get("h24", 0))
+    price  = pair.get("priceUsd") or "?"
+    dex_url = f"https://dexscreener.com/solana/{ca}"
+    x_url   = f"https://x.com/search?q={ca}"
+
+    created_ts = pair.get("pairCreatedAt")
+    if created_ts:
+        created_dt  = datetime.fromtimestamp(created_ts / 1000, tz=timezone.utc)
+        created_str = created_dt.strftime("%b %d, %Y %H:%M UTC")
+        age_days    = (datetime.now(timezone.utc) - created_dt).days
+        launch_line = f"\U0001f4c5 Launched: {e(created_str)} \\({e(age_days)}d ago\\)\n"
+    else:
+        launch_line = "\U0001f4c5 Launched: Unknown\n"
+
+    return (
+        f"`{e(ca)}`\n\n"
+        + launch_line
+        + f"\U0001f4b0 Price: ${e(price)}\n"
+        f"\U0001f48e FDV: ${e(f'{fdv:,.0f}')}\n"
+        f"\U0001f4a6 Liq: ${e(f'{liq:,.0f}')}\n"
+        f"\U0001f4ca Vol 1h: ${e(f'{vol1h:,.0f}')} \\| Vol 24h: ${e(f'{vol24:,.0f}')}\n"
+        f"\U0001f4c8 1h: {e(f'{h1:+.2f}')}% \\| 24h: {e(f'{h24:+.2f}')}%\n\n"
+        f"[Sniff on DexScreener]({dex_url}) \\| [Search on X]({x_url})\n\n"
+        f"_\u26a0\ufe0f DYOR, raggy\\. Not financial advice\\._"
+    )
+
+
+def format_og_response(og: dict, total_versions: int, risk_badge: str, scan_prices: dict) -> str:
+    e      = escape_md
+    name   = og.get("baseToken", {}).get("name",   "?")
+    symbol = og.get("baseToken", {}).get("symbol", "?")
+    versions_line = e(f"Scuby sniffed out {total_versions} version(s) on Solana \u2014 this one's the OG!")
+    header = (
+        f"\U0001f43e *Scuby\\-Dooby\\-Doo\\! Found it\\!*\n"
+        f"\U0001f3c6 *OG \\${e(symbol)}* \u2014 {e(name)}\n"
+        f"_{versions_line}_\n\n"
+    )
+    badge_line = f"{risk_badge}\n\n" if risk_badge else ""
+    perf = price_movement_line(og, scan_prices)
+    return header + badge_line + _pair_stats_block(og) + f"\n{perf}"
+
+
+def format_version_card(pair: dict, rank: int, total: int, scan_prices: dict) -> str:
+    e      = escape_md
+    name   = pair.get("baseToken", {}).get("name",   "?")
+    symbol = pair.get("baseToken", {}).get("symbol", "?")
+
+    if rank == 1:
+        badge = "\U0001f3c6 *\\#1 \u2014 The OG*"
+    elif rank == total:
+        badge = f"\U0001f195 *\\#{e(rank)} \u2014 Newest*"
+    else:
+        badge = f"\U0001f4cd *\\#{e(rank)} of {e(total)}*"
+
+    perf = price_movement_line(pair, scan_prices)
+    return (
+        f"\U0001f43e *\\${e(symbol)}* \u2014 {e(name)}\n"
+        f"{badge}\n\n"
+        + _pair_stats_block(pair)
+        + f"\n{perf}"
+    )
+
+
+def format_movers_report(pairs: list[dict], symbol: str, scan_prices: dict) -> str:
+    e = escape_md
+
+    def _multiple(p: dict) -> float:
+        ca      = p.get("baseToken", {}).get("address", "")
+        current = safe_float(p.get("priceUsd") or 0)
+        entry   = scan_prices.get(ca)
+        if entry and entry.get("price", 0) > 0 and current > 0:
+            return current / entry["price"]
+        return 1 + safe_float(p.get("priceChange", {}).get("h24", 0)) / 100
+
+    def _has_scan_price(p: dict) -> bool:
+        ca = p.get("baseToken", {}).get("address", "")
+        return ca in scan_prices and scan_prices[ca].get("price", 0) > 0
+
+    sorted_pairs = sorted(enumerate(pairs, start=1), key=lambda x: _multiple(x[1]), reverse=True)
+    any_real     = any(_has_scan_price(p) for p in pairs)
+    basis_note   = "since first scan" if any_real else "24h \\(no scan prices recorded yet\\)"
+
+    lines = [
+        f"\U0001f4ca *Movers Report \u2014 \\${e(symbol)}*\n"
+        f"_{e(str(len(pairs)))} versions ranked by performance {basis_note}_\n"
+    ]
+    for original_rank, pair in sorted_pairs:
+        name     = pair.get("baseToken", {}).get("name",    "?")
+        ca       = pair.get("baseToken", {}).get("address", "?")
+        multiple = _multiple(pair)
+        label    = _calc_perf_label(multiple)
+        h1       = safe_float(pair.get("priceChange", {}).get("h1", 0))
+        rank_label      = "\U0001f3c6 OG" if original_rank == 1 else f"\\#{e(original_rank)}"
+        short_ca        = f"{ca[:6]}..."
+        fallback_marker = "" if _has_scan_price(pair) else " _\\(24h\\)_"
+        dex_url         = f"https://dexscreener.com/solana/{ca}"
+        lines.append(
+            f"{rank_label} \\| [{e(name)}]({dex_url}) \\| `{short_ca}`\n"
+            f"  {e(label)}{fallback_marker} \\(1h: {e(f'{h1:+.1f}')}%\\)\n"
+        )
+
+    lines.append(f"\n_\u26a0\ufe0f DYOR, raggy\\. Not financial advice\\._")
+    return "\n".join(lines)
+
+
+# ─── Monitor helpers ──────────────────────────────────────────────────────────
+
+def parse_interval(raw: str) -> int | None:
+    raw = raw.strip().lower()
+    m   = re.match(r'^(\d+)(m|min|minutes?|s|sec|seconds?)?$', raw)
+    if not m:
+        return None
+    value = int(m.group(1))
+    unit  = m.group(2) or "m"
+    secs  = value if unit.startswith("s") else value * 60
+    if not (MONITOR_MIN_INTERVAL <= secs <= MONITOR_MAX_INTERVAL):
+        return None
+    return secs
+
+
+def format_monitor_ping(pair: dict, symbol: str, interval_secs: int) -> str:
+    e              = escape_md
+    ca             = pair.get("baseToken", {}).get("address", "?")
+    price          = pair.get("priceUsd") or "?"
+    mcap           = safe_float(pair.get("marketCap") or pair.get("fdv") or 0)
+    h1             = safe_float(pair.get("priceChange", {}).get("h1",  0))
+    h24            = safe_float(pair.get("priceChange", {}).get("h24", 0))
+    dex_url        = f"https://dexscreener.com/solana/{ca}"
+    now_str        = datetime.now(timezone.utc).strftime("%H:%M UTC")
+    interval_label = f"{interval_secs // 60}m"
+    return (
+        f"📡 *{e(symbol)}* \\— {e(interval_label)} update\n\n"
+        f"💎 MCap:  ${e(f'{mcap:,.0f}')}\n"
+        f"💰 Price: ${e(str(price))}\n"
+        f"📈 1h: {e(f'{h1:+.2f}')}%  \\|  24h: {e(f'{h24:+.2f}')}%\n\n"
+        f"🕐 {e(now_str)}\n"
+        f"[DexScreener]({dex_url})"
+    )
+
+
+# ─── Leaderboard ──────────────────────────────────────────────────────────────
+
+async def build_leaderboard_text(scan_prices: dict, http: httpx.AsyncClient, bot_data: dict, chat_id: str = "") -> str:
+    e = escape_md
+    if not scan_prices:
+        return "\U0001f43e No tokens have been sniffed yet\\. Drop a \\$TICKER in chat to get started\\!"
+
+    cache     = bot_data.setdefault("leaderboard_cache", {})
+    cache_key = chat_id or "global"
+    cached    = cache.get(cache_key)
+    if cached and time.monotonic() - cached["ts"] < LEADERBOARD_CACHE_TTL:
+        return cached["text"]
+
+    chat_entries = (
+        {ca: entry for ca, entry in scan_prices.items() if entry.get("chat_id", "") in ("", chat_id)}
+        if chat_id else dict(scan_prices)
+    )
+    if not chat_entries:
+        return (
+            "\U0001f43e No tokens have been sniffed in this chat yet\\.\n"
+            "Drop a `\\$TICKER` or CA here and Scuby will start tracking\\!"
+        )
+
+    sorted_entries = sorted(chat_entries.items(), key=lambda x: x[1].get("ts", 0), reverse=True)
+    capped         = sorted_entries[:LEADERBOARD_MAX_CAS]
+    cas            = [ca for ca, _ in capped]
+    current_prices = await fetch_current_prices(cas, http)
+
+    results = [
+        (ca, entry, current_prices[ca] / entry["price"])
+        for ca, entry in capped
+        if entry.get("price", 0) > 0 and current_prices.get(ca, 0) > 0
+    ]
+    if not results:
+        return "\U0001f43e No live price data available right now\\. Try again in a moment\\!"
+
+    results.sort(key=lambda x: x[2], reverse=True)
+    top    = results[:LEADERBOARD_SIZE]
+    medals = ["\U0001f947", "\U0001f948", "\U0001f949"]
+    lines  = [
+        f"\U0001f3c6 *Leaderboard \u2014 Top Movers*\n"
+        f"_Best performers sniffed in this chat_\n"
+    ]
+    for rank, (ca, entry, multiple) in enumerate(top, 1):
+        symbol   = entry.get("symbol", "?")
+        label    = _calc_perf_label(multiple)
+        scan_str = datetime.fromtimestamp(entry["ts"], tz=timezone.utc).strftime("%b %d")
+        dex_url  = f"https://dexscreener.com/solana/{ca}"
+        medal    = medals[rank - 1] if rank <= 3 else f"\\#{rank}"
+        sniffer  = f" _by {e(entry['scanned_by'])}_" if entry.get("scanned_by") else ""
+        lines.append(f"{medal} [{e(symbol)}]({dex_url}) \u2014 {e(label)} \\(since {e(scan_str)}{sniffer}\\)")
+
+    lines.append(f"\n_\u26a0\ufe0f DYOR, raggy\\. Not financial advice\\._")
+    text = "\n".join(lines)
+    cache[cache_key] = {"text": text, "ts": time.monotonic()}
+    return text
+
+
+# ─── Pair helpers ─────────────────────────────────────────────────────────────
+
+def _dated_pairs(pairs: list[dict]) -> list[dict]:
+    return sorted([p for p in pairs if p.get("pairCreatedAt")], key=lambda p: p["pairCreatedAt"])
+
+
+def find_og(pairs: list[dict]) -> dict | None:
+    dated = _dated_pairs(pairs)
+    return dated[0] if dated else None
+
+
+def sort_pairs_oldest_first(pairs: list[dict]) -> list[dict]:
+    dated   = _dated_pairs(pairs)
+    undated = [p for p in pairs if not p.get("pairCreatedAt")]
+    return dated + undated
+
+
+# ─── Versions cache ───────────────────────────────────────────────────────────
+
+def _cache_key(query_type: str, query_value: str) -> str:
+    return f"{query_type}:{query_value}"
+
+
+def _store_versions(bot_data: dict, query_type: str, query_value: str, pairs: list[dict]) -> None:
+    cache = bot_data.setdefault("versions_cache", {})
+    if len(cache) >= VERSIONS_CACHE_MAX:
+        oldest_key = min(cache, key=lambda k: cache[k]["ts"])
+        del cache[oldest_key]
+        logger.debug(f"versions_cache full — evicted {oldest_key!r}")
+    cache[_cache_key(query_type, query_value)] = {
+        "pairs": sort_pairs_oldest_first(pairs),
+        "ts":    time.monotonic(),
+    }
+
+
+def _load_versions(bot_data: dict, query_type: str, query_value: str) -> list[dict] | None:
+    cache = bot_data.get("versions_cache", {})
+    entry = cache.get(_cache_key(query_type, query_value))
+    if not entry:
+        return None
+    if time.monotonic() - entry["ts"] > VERSIONS_CACHE_TTL:
+        return None
+    return entry["pairs"]
+
+
+def _bust_cache(bot_data: dict, query_type: str, query_value: str) -> None:
+    cache = bot_data.get("versions_cache", {})
+    cache.pop(_cache_key(query_type, query_value), None)
+
+
+# ─── Shared fetch + cache ─────────────────────────────────────────────────────
+
+async def fetch_pairs_and_cache(
+    query_type: str,
+    query_value: str,
+    http: httpx.AsyncClient,
+    bot_data: dict,
+    force: bool = False,
+    scanned_by: str = "",
+    chat_id: str = "",
+) -> list[dict]:
+    if not force:
+        cached = _load_versions(bot_data, query_type, query_value)
+        if cached is not None:
+            scan_prices: dict = bot_data.setdefault("scan_prices", {})
+            if record_scan_prices(cached, scan_prices, scanned_by=scanned_by, chat_id=chat_id):
+                await save_scan_prices_async(scan_prices)
+                logger.info(f"Recorded scan prices from cache hit for {query_value!r}")
+            return cached
+
+    pairs = await (get_all_by_ca(query_value, http) if query_type == "ca" else get_all_by_ticker(query_value, http))
+
+    if pairs:
+        _store_versions(bot_data, query_type, query_value, pairs)
+        if not force:
+            scan_prices = bot_data.setdefault("scan_prices", {})
+            if record_scan_prices(pairs, scan_prices, scanned_by=scanned_by, chat_id=chat_id):
+                await save_scan_prices_async(scan_prices)
+                logger.info(f"Recorded scan prices for {query_value!r} (by {scanned_by!r} in chat {chat_id!r})")
+        return _load_versions(bot_data, query_type, query_value) or pairs
+
+    return pairs
+
+
+# ─── Inline keyboards ─────────────────────────────────────────────────────────
+
+def og_keyboard(query_type: str, query_value: str, show_versions: bool = True) -> InlineKeyboardMarkup:
+    rows = []
+    if show_versions:
+        rows.append([InlineKeyboardButton("📋 See all versions", callback_data=f"ver|{query_type}|{query_value}|0")])
+    rows.append([InlineKeyboardButton("🔄 Refresh", callback_data=f"ro|{query_type}|{query_value}")])
+    return InlineKeyboardMarkup(rows)
+
+
+def versions_keyboard(query_type: str, query_value: str, page: int, total: int) -> InlineKeyboardMarkup:
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("« Prev", callback_data=f"ver|{query_type}|{query_value}|{page - 1}"))
+    nav.append(InlineKeyboardButton(f"{page + 1} / {total}", callback_data="noop"))
+    if page < total - 1:
+        nav.append(InlineKeyboardButton("Next »", callback_data=f"ver|{query_type}|{query_value}|{page + 1}"))
+    return InlineKeyboardMarkup([
+        nav,
+        [InlineKeyboardButton("📊 Scan movers", callback_data=f"mov|{query_type}|{query_value}")],
+        [
+            InlineKeyboardButton("🔄 Refresh",    callback_data=f"rv|{query_type}|{query_value}|{page}"),
+            InlineKeyboardButton("🏆 Back to OG", callback_data=f"og|{query_type}|{query_value}"),
+        ],
+    ])
+
+
+def movers_keyboard(
+    query_type: str,
+    query_value: str,
+    top_movers: list[tuple[int, int]] | None = None,
+) -> InlineKeyboardMarkup:
+    rows = []
+    if top_movers:
+        rows.append([
+            InlineKeyboardButton(f"View #{r}", callback_data=f"ver|{query_type}|{query_value}|{i}")
+            for r, i in top_movers
+        ])
+    rows.append([
+        InlineKeyboardButton("🏆 Back to OG",      callback_data=f"og|{query_type}|{query_value}"),
+        InlineKeyboardButton("📋 See all versions", callback_data=f"ver|{query_type}|{query_value}|0"),
+    ])
+    rows.append([
+        InlineKeyboardButton("🔄 Refresh",          callback_data=f"mov|{query_type}|{query_value}"),
+    ])
+    return InlineKeyboardMarkup(rows)
+
+
+def main_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔍 Sniff a token", callback_data="menu|sniff"),
+            InlineKeyboardButton("🏆 Leaderboard",   callback_data="menu|leaderboard"),
+        ],
+        [
+            InlineKeyboardButton("🔔 My Alerts",     callback_data="menu|alerts"),
+            InlineKeyboardButton("👁 Watching",      callback_data="menu|watching"),
+        ],
+        [
+            InlineKeyboardButton("📡 Monitoring",    callback_data="menu|monitoring"),
+            InlineKeyboardButton("📶 Feed",          callback_data="menu|feed"),
+        ],
+        [
+            InlineKeyboardButton("❓ Help",           callback_data="menu|help"),
+        ],
+    ])
+
+
+def leaderboard_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔄 Refresh",   callback_data="menu|leaderboard"),
+        InlineKeyboardButton("🏠 Main Menu", callback_data="menu|home"),
+    ]])
+
+
+def my_alerts_keyboard(user_alerts: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for alert in user_alerts:
+        ca     = alert["ca"]
+        symbol = alert.get("symbol", ca[:8])
+        target = alert["target_multiple"]
+        rows.append([InlineKeyboardButton(
+            f"❌ Cancel alert: {symbol} @ {target:.1f}x",
+            callback_data=f"delalert|{ca}",
+        )])
+    rows.append([
+        InlineKeyboardButton("❓ How to set an alert", callback_data="menu|help"),
+        InlineKeyboardButton("🏠 Main Menu",           callback_data="menu|home"),
+    ])
+    return InlineKeyboardMarkup(rows)
+
+
+def monitoring_keyboard(chat_id: int, monitors: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for m in monitors:
+        symbol   = m.get("symbol", m["ca"][:8])
+        interval = m["interval_secs"] // 60
+        rows.append([InlineKeyboardButton(
+            f"❌ Stop: {symbol} ({interval}m)",
+            callback_data=f"delmonitor|{m['id']}",
+        )])
+    rows.append([InlineKeyboardButton("🏠 Main Menu", callback_data="menu|home")])
+    return InlineKeyboardMarkup(rows)
+
+
+def watchlist_keyboard(chat_id: int, watches: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for w in watches:
+        label = ", ".join(w["terms"][:3])
+        if len(w["terms"]) > 3:
+            label += f" +{len(w['terms']) - 3}"
+        rows.append([InlineKeyboardButton(
+            f"❌ Stop watching: {label}",
+            callback_data=f"delwatch|{w['id']}",
+        )])
+    rows.append([
+        InlineKeyboardButton("👁 What I'm watching", callback_data="menu|watching"),
+        InlineKeyboardButton("🏠 Main Menu",          callback_data="menu|home"),
+    ])
+    return InlineKeyboardMarkup(rows)
+
+
+# ─── Keyword expansion (watcher) ─────────────────────────────────────────────
+
+_KEYWORD_CLUSTERS: dict[str, list[str]] = {
+    "dog":     ["dog", "doge", "doggo", "puppy", "shiba", "inu", "woof", "pup", "canine", "hound"],
+    "cat":     ["cat", "kitty", "kitten", "meow", "neko", "feline", "puss", "tabby", "catcoin"],
+    "pepe":    ["pepe", "frog", "kek", "pepecoin", "frogcoin"],
+    "bird":    ["bird", "birb", "tweet", "parrot", "eagle", "hawk", "crow", "robin", "flamingo"],
+    "snake":   ["snake", "viper", "cobra", "python", "mamba", "asp"],
+    "bear":    ["bear", "grizzly", "panda", "polar", "teddy"],
+    "bull":    ["bull", "ox", "bison", "steer", "bovine"],
+    "wolf":    ["wolf", "wolves", "wolfcoin", "werewolf", "howl"],
+    "fish":    ["fish", "shark", "whale", "tuna", "salmon", "dory", "nemo", "finney"],
+    "monkey":  ["monkey", "ape", "chimp", "gorilla", "kong", "primate", "baboon"],
+    "rabbit":  ["rabbit", "bunny", "hare", "warren", "fluffy"],
+    "lion":    ["lion", "lioness", "mane", "roar", "leo"],
+    "tiger":   ["tiger", "tigger", "stripe", "bengal"],
+    "horse":   ["horse", "pony", "stallion", "mare", "colt", "mustang", "equine"],
+    "pig":     ["pig", "hog", "swine", "boar", "piglet", "oink"],
+    "duck":    ["duck", "quack", "mallard", "duckling"],
+    "frog":    ["frog", "toad", "pepe", "kermit", "ribbit"],
+    "dragon":  ["dragon", "drake", "drago", "wyrm"],
+    "unicorn": ["unicorn", "uni", "horn", "mythical"],
+    "trump":   ["trump", "maga", "donald", "ivanka", "barron"],
+    "elon":    ["elon", "musk", "tesla", "spacex", "xmeme"],
+    "baby":    ["baby", "bby", "infant", "mini", "tiny", "lil"],
+    "moon":    ["moon", "lunar", "moonshot", "mooning"],
+    "based":   ["based", "base", "onchain", "based coin"],
+    "ai":      ["ai", "gpt", "neural", "artificial", "robot", "cyborg"],
+    "fire":    ["fire", "flame", "blaze", "inferno", "burn"],
+    "gg":      ["gg", "gaming", "gamer", "play", "arcade", "game"],
+    "meme":    ["meme", "memecoins", "viral", "degen", "wojak", "chad"],
+    "animal":  [
+        "dog", "cat", "pepe", "bird", "snake", "bear", "wolf", "fish",
+        "monkey", "rabbit", "lion", "tiger", "horse", "pig", "duck",
+        "frog", "dragon", "bull", "ape", "shiba",
+    ],
+}
+
+_WORD_TO_CLUSTERS: dict[str, list[str]] = {}
+for _ck, _words in _KEYWORD_CLUSTERS.items():
+    for _w in _words:
+        _WORD_TO_CLUSTERS.setdefault(_w.lower(), []).append(_ck)
+
+_SKIP_TOKENS = {
+    "the", "a", "an", "for", "out", "new", "any", "all",
+    "some", "watch", "sniff", "find", "get", "look",
+    "coin", "coins", "token", "tokens", "meme", "memecoin",
+}
+
+
+def expand_keywords(raw: str) -> tuple[list[str], list[str]]:
+    tokens           = re.findall(r'[a-z0-9]+', raw.lower())
+    matched_clusters: set[str]  = set()
+    loose_tokens: list[str]     = []
+    seen_loose: set[str]        = set()
+
+    for tok in tokens:
+        if tok in _WORD_TO_CLUSTERS:
+            for cluster in _WORD_TO_CLUSTERS[tok]:
+                matched_clusters.add(cluster)
+        elif len(tok) >= 2 and tok not in _SKIP_TOKENS and tok not in seen_loose:
+            loose_tokens.append(tok)
+            seen_loose.add(tok)
+
+    terms    = list(matched_clusters) + loose_tokens
+    patterns: list[str] = []
+    for cluster in matched_clusters:
+        patterns.extend(_KEYWORD_CLUSTERS[cluster])
+    patterns.extend(loose_tokens)
+    seen: set[str] = set()
+    patterns = [p for p in patterns if not (p in seen or seen.add(p))]  # type: ignore[func-returns-value]
+    return terms, patterns
+
+
+def token_matches_patterns(name: str, symbol: str, patterns: list[str]) -> bool:
+    text = f"{name} {symbol}".lower()
+    return any(re.search(rf'\b{re.escape(p)}\b', text) for p in patterns)
+
+
+# ─── Watcher personality ──────────────────────────────────────────────────────
+
+_WATCH_CONFIRM_LINES = [
+    r"Scuby's on the case\! 🐾 I'll sniff out every *{terms}* coin the moment one launches\!",
+    r"Rooby\-Rooby\-Roo\! 🐾 Scuby's nose is tuned to *{terms}* — any new one and I'll bark\!",
+    r"Scuby\-Dooby\-Doo\! 🔍 Raggy, I'm watching for *{terms}* tokens like a good boy\!",
+    r"Zoinks\! You got it\! 🐾 My super sniffer is locked onto *{terms}* — I won't miss a thing\!",
+    r"Hehehe\! 🐾 Leave it to Scuby\! I'll howl the second I smell a new *{terms}* coin\!",
+]
+
+_WATCH_ALERT_INTROS = [
+    r"Ruh\-roh\! 🐾 Scuby sniffed one out\!",
+    r"Scuby\-Dooby\-Doo\! 🔍 Found a fresh one, raggy\!",
+    r"Zoinks\! 🐾 A brand new one just launched\!",
+    r"Hehehe\! 🐾 Scuby's nose never lies — new token detected\!",
+    r"Rooby\-Rooby\-Roo\! 🐾 Just launched and Scuby caught it\!",
+]
+
+
+def watch_confirm_text(terms: list[str]) -> str:
+    terms_str = escape_md(", ".join(f"#{t}" for t in terms) if terms else "those keywords")
+    return _random.choice(_WATCH_CONFIRM_LINES).replace("{terms}", terms_str)
+
+
+def watch_alert_intro() -> str:
+    return _random.choice(_WATCH_ALERT_INTROS)

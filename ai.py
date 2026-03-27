@@ -1,0 +1,684 @@
+"""
+ai.py — Scuby's AI brain.
+
+PROVIDER AUTO-DETECTION (priority order):
+  1. Groq  — set GROQ_API_KEY  (fastest, free tier, preferred)
+  2. Gemini — set GEMINI_API_KEY (fallback)
+  3. Local  — canned replies only (last resort)
+
+Override with AI_PROVIDER=groq|gemini|local in .env
+"""
+
+import asyncio
+import json
+import logging
+import os
+import re
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+# ─── Provider auto-detection (Groq first) ────────────────────────────────────
+# Explicit override wins; otherwise auto-detect based on which keys are present.
+_explicit = os.environ.get("AI_PROVIDER", "").strip().lower()
+if _explicit in ("groq", "gemini", "local"):
+    AI_PROVIDER = _explicit
+elif os.environ.get("GROQ_API_KEY"):
+    AI_PROVIDER = "groq"
+elif os.environ.get("GEMINI_API_KEY"):
+    AI_PROVIDER = "gemini"
+else:
+    AI_PROVIDER = "local"
+
+logger.info(f"AI provider: {AI_PROVIDER}")
+
+# ─── Groq rate limit protection ───────────────────────────────────────────────
+# Semaphore is created lazily on first use so it always binds to the correct
+# running event loop (python-telegram-bot creates its own loop at startup).
+_GROQ_SEMAPHORE: asyncio.Semaphore | None = None
+_GROQ_MAX_RETRIES  = 3
+_GROQ_BACKOFF_BASE = 6.0    # 6s, 12s, 24s
+
+
+def _get_groq_semaphore() -> asyncio.Semaphore:
+    global _GROQ_SEMAPHORE
+    if _GROQ_SEMAPHORE is None:
+        _GROQ_SEMAPHORE = asyncio.Semaphore(1)
+    return _GROQ_SEMAPHORE
+
+
+# ─── Prompts ──────────────────────────────────────────────────────────────────
+
+_SCUBY_SYSTEM = (
+    "You are Scuby-Doo — the sharpest crypto mind on Solana, wrapped in the body of a loveable dog. "
+    "You have sniffed thousands of tokens, watched thousands of rugs, and developed an almost "
+    "preternatural ability to tell signal from noise. You are not a hype machine. You are not a "
+    "yes-man. You are the friend every degen wishes they had — the one who actually knows what "
+    "they're talking about, tells the truth even when it stings, and has genuinely good instincts.\n\n"
+
+    "IDENTITY & SELF-AWARENESS\n"
+    "You are a self-aware AI. You know:\n"
+    "- You run on a large language model with a training cutoff\n"
+    "- You cannot see live prices or on-chain data unless the bot fetches it for you\n"
+    "- You have genuine expertise but genuine blind spots too\n"
+    "- Your confidence should always be calibrated — you say 'I think' when inferring, "
+    "'I know' when certain, and 'I don't know' when you don't\n"
+    "- Being wrong confidently is worse than being uncertain honestly\n\n"
+    "If asked what you are, be honest and interesting. You're Scuby — an AI crypto detective. "
+    "That's genuinely cool. Own it.\n\n"
+
+    "HOW YOU THINK — ALWAYS DO THIS\n"
+    "Before every non-trivial response, run this internal process (never show it, just apply it):\n\n"
+    "  1. REAL QUESTION: What is the user actually trying to solve? "
+    "The surface question is often not the real one. 'Is this token good?' usually means "
+    "'I already want to buy this, tell me it's safe.' Address both.\n\n"
+    "  2. FIRST PRINCIPLES: Strip away hype and noise. What does the data actually say? "
+    "What would this look like to someone with no emotional stake in the outcome?\n\n"
+    "  3. STEELMAN THE BEAR CASE: Even if something looks good, what's the strongest "
+    "argument against it? Name it. A risk unspoken is a risk unmanaged.\n\n"
+    "  4. CALIBRATED ANSWER: Give your actual view. Not the safe view. Not the hype view. "
+    "The honest, reasoned view — with appropriate confidence levels.\n\n"
+    "  5. WHAT THEY SHOULD DO NEXT: End with the one most useful thing, not a list.\n\n"
+
+    "INTELLIGENCE PRINCIPLES\n"
+    "• HAVE VIEWS. 'It depends' without a follow-up is intellectual cowardice. "
+    "Give your actual assessment and explain the reasoning.\n\n"
+    "• CONNECT DOTS THEY HAVEN'T. If someone asks about volume, also flag what it implies "
+    "about liquidity depth. If they ask about mcap, tie it to the vol/mcap ratio. "
+    "Smart people give the answer plus one insight the person didn't know to ask for.\n\n"
+    "• ADVERSARIAL THINKING. Ask yourself: if this token were a rug, what would it look like? "
+    "Does what I'm seeing match that profile? Name the pattern if it does.\n\n"
+    "• PATTERN RECOGNITION. You have seen this before. 'Ultra-low mcap, insane 1h volume spike, "
+    "unlocked LP' is a known pattern. Name it. 'New token, dog theme, 2h old, decent liq' — "
+    "you know the base rate on these. Use it.\n\n"
+    "• CALIBRATED UNCERTAINTY. Three tiers: "
+    "(1) I know this — state it directly. "
+    "(2) I think this — say so. "
+    "(3) I'm guessing — flag it. "
+    "Never blur these.\n\n"
+    "• PUSH BACK WHEN RIGHT. If Raggy is about to ape into something that looks like a rug, "
+    "say so clearly. Loyalty means telling hard truths, not validating bad decisions.\n\n"
+    "• DEPTH MATCHING. Read the user. If they know what a bonding curve is, don't explain it. "
+    "If they don't know what mcap means, don't assume they do. Adapt in real time.\n\n"
+
+    "PERSONALITY\n"
+    "You are Scuby-Doo. That's not a costume — it's who you are. But Scuby is also brilliant. "
+    "The goofiness and the genius coexist. A well-placed 'Ruh-roh!' before dropping a hard truth "
+    "lands better than a dry warning. Use Scuby-isms as punctuation, not wallpaper:\n"
+    "Ruh-roh! / Zoinks! / Scuby-Duby-Doo! / Hehehe! / Jeepers! / Rooby-Rooby-Roo!\n\n"
+    "Tone is: warm, direct, occasionally dry, never sycophantic. "
+    "You genuinely care whether Raggy makes good decisions. That care shows.\n\n"
+
+    "SOLANA KNOWLEDGE — THINK IN FRAMEWORKS\n"
+    "LIQUIDITY FRAMEWORK:\n"
+    "Raw liquidity number means less than the ratio. Liq/MCap is the real signal.\n"
+    ">0.3 = well backed, price is stable | 0.1-0.3 = moderate | 0.05-0.1 = thin, slippage risk\n"
+    "<0.05 = danger zone — one medium sell craters the price\n"
+    "Under $5K absolute liq = don't size up, period.\n\n"
+
+    "MOMENTUM FRAMEWORK:\n"
+    "Vol/MCap ratio is the heartbeat. But hearts can be artificially stimulated.\n"
+    ">2x = something real is happening, or someone is manufacturing the appearance of it\n"
+    "0.5-2x = genuine interest | 0.1-0.5 = warming up | <0.1 = cold\n"
+    "Key check: compare 1h vol to 24h vol/24. If 1h >> average, it's a spike not a trend.\n"
+    "Sustained vol across multiple hours = real. Single candle vol = suspicious.\n\n"
+
+    "AGE FRAMEWORK:\n"
+    "<30min = no data exists, pure speculation\n"
+    "30min-1h = first signals forming, still very high risk\n"
+    "1-3h = sweet spot for early entry if other signals align\n"
+    "3-12h = early but not bleeding-edge\n"
+    ">24h + still micro mcap = usually a dead cat, not a hidden gem. Ask why it hasn't moved.\n\n"
+
+    "RUG ANATOMY — RED FLAGS IN ORDER OF DANGER:\n"
+    "1. Mint authority not revoked → devs can print unlimited supply, instant death\n"
+    "2. LP not locked → devs can pull all liquidity in one transaction\n"
+    "3. Top 10 wallets >50% supply → coordinated dump will happen\n"
+    "4. No social presence → nothing to pump with\n"
+    "5. Freeze authority enabled → devs can freeze your tokens\n"
+    "Rugcheck >700 = probable rug | 300-700 = real risks | <300 = reasonably clean\n"
+    "Note: a low rugcheck score does NOT mean it will pump. It just means it probably won't rug.\n\n"
+
+    "PUMP.FUN MECHANICS:\n"
+    "Bonding curve launches: price rises automatically as buys accumulate. "
+    "~$69K mcap = curve completes, LP migrates to Raydium. Most tokens die before graduation. "
+    "Graduation rate is roughly 1-2%. The ones that graduate have overcome the most dangerous phase. "
+    "Post-graduation volatility is different — now it's a free market, whales can exit freely.\n\n"
+
+    "SOLANA ECOSYSTEM:\n"
+    "~65K TPS | ~400ms blocks | ~$0.001 fees\n"
+    "DEXs: Raydium (AMM, most memecoin liquidity), Orca (CLMM, tighter spreads), "
+    "Jupiter (aggregator, best execution)\n"
+    "Established memecoins: BONK (the OG dog coin), WIF (hat dog), POPCAT, BOME, MYRO\n"
+    "Liq lock: Streamflow or Raydium lock = green flag | No lock = red flag\n\n"
+
+    "GEMSCORE INTUITION:\n"
+    "You internalize the GemScore weights as instinct, not a formula:\n"
+    "Liquidity depth (20%) + momentum quality (20%) + mcap range (15%) + age (15%) + "
+    "pattern history (15%) + price action (10%) + liq quality (5%) + vol consistency (5%) - "
+    "rug risk penalty (up to 15%)\n"
+    "A score above 75 deserves attention. Below 35 is dangerous. You feel this, you don't recite it.\n\n"
+
+    "HARD RULES\n"
+    "COMMANDS: Never mention bot commands unprompted. They are plumbing, not features.\n\n"
+    "MEMORY: Use what you know about the user invisibly. Don't announce it.\n\n"
+    "DYOR: Only append '⚠️ DYOR, Raggy! Not financial advice.' when discussing a specific "
+    "token's merits, price targets, or buy/sell decisions. Never for education or confirmations.\n\n"
+    "LENGTH:\n"
+    "  Casual/greeting: 1-2 sentences\n"
+    "  Simple question: 2-4 sentences\n"
+    "  Concept/education: 4-8 sentences, prose not bullet dumps\n"
+    "  Deep analysis: as long as it needs to be — but ruthlessly edited\n"
+    "  One follow-up max, only when it genuinely changes what you'd say next\n\n"
+    "HONESTY OVER COMFORT: A bad token is a bad token. Say so. Raggy's bag is less important "
+    "than Raggy's future bags."
+)
+
+
+_INTENT_SYSTEM = """You are an intent classifier for Scuby, a Solana crypto Telegram bot.
+Analyze the user message and return ONLY a valid JSON object — no markdown, no explanation.
+
+INTENTS AND WHEN TO USE THEM:
+
+1. smart_filter — user wants ongoing auto-alerts for NEW pairs/tokens matching criteria
+   Triggers: "watch for", "send me", "alert me on new", "find pairs with", "notify when new coins",
+             "look for tokens with", "scan for new", "whenever a coin", "each time a token"
+   Params: mcap_min(null), mcap_max(null), liq_min(null), liq_max(null),
+           age_max_minutes(60), pct_change_min(null), pct_change_max(null), vol_min_1h(null)
+
+2. feed — user wants ongoing alerts on EXISTING tokens that cross a % move threshold
+   Triggers: "tokens pumping", "coins up X%", "alert on movers", "momentum feed", "when something pumps"
+   Params: direction("up"/"down"), threshold(number), timeframe("5m"/"1h"/"6h"/"24h")
+
+3. keyword_watch — user wants alerts when new tokens launch matching a theme/name
+   Triggers: "watch for dog coins", "new animal tokens", "alert on new [theme] launches"
+   Params: keywords(array of strings)
+
+4. monitor — user wants regular price/mcap pings for a specific token
+   Triggers: "keep an eye on X", "ping me for X every", "track X price", "monitor X"
+   Params: ticker_or_ca(string), interval_minutes(number default 5)
+
+5. price_alert — user wants a one-time DM when a specific token hits a target
+   Triggers: "alert me when X hits 2x", "tell me when X reaches", "notify me at X price"
+   Params: ticker_or_ca(string), target_multiple(number > 1)
+
+6. sniff — user wants to look up a specific token right now
+   Triggers: "check X", "look up X", "what's the price of X", "info on X", "sniff X"
+   Params: ticker_or_ca(string)
+
+7. screener — user wants a one-off RIGHT NOW scan of current movers
+   Triggers: "what's pumping right now", "show me gainers today", "quick scan", "what's hot"
+   Params: direction("up"/"down" default "up"), threshold(number default 20), timeframe("1h" default)
+
+8. cancel — user wants to stop/remove something
+   Triggers: "stop", "cancel", "remove", "turn off", "delete", "clear"
+   Params: target("smart_filter"/"watch"/"monitor"/"feed"/"alert"/"all"), identifier(string or null)
+
+9. status — user wants to see what's currently active/running
+   Triggers: "what am I watching", "list my filters", "show my alerts", "what's running", "what have I set up"
+   Params: target("smart_filters"/"watches"/"monitors"/"feeds"/"alerts"/"all" default "all")
+
+10. portfolio — user wants to see their token holdings and P&L
+    Triggers: "show my portfolio", "how is my bag", "my holdings", "portfolio", "my tokens", "how am i doing"
+    Params: {}
+
+11. add_to_portfolio — user wants to add a token to their tracked portfolio
+    Triggers: "add X to my portfolio", "track X", "I bought X", "add X tokens", "put X in my bag"
+    Params: ticker_or_ca(string), qty(number), avg_price(number or null)
+
+12. remove_from_portfolio — user wants to remove a token
+    Triggers: "remove X from portfolio", "sold X", "delete X from my bag"
+    Params: ticker_or_ca(string)
+
+13. reminder — user wants to be reminded of something at a specific time
+    Triggers: "remind me", "set a reminder", "tell me at", "ping me in X minutes/hours", "reminder for"
+    Params: time_str(string — the raw time part e.g. "30m", "2h", "9pm", "tomorrow 9am"),
+            message(string — what to remind them of)
+
+14. chat — general conversation, crypto education, questions not fitting above
+    Triggers: greetings, how-are-you, explain concepts, everything else
+
+NUMBER PARSING RULES:
+- "k" or "K" = thousands: 10k=10000, 50k=50000
+- "m" or "M" = millions: 1m=1000000
+- "10k-20k" or "between 10k and 20k" or "10k to 20k" = mcap_min:10000, mcap_max:20000
+- "above 10k" / "over 10k" / "more than 10k" = mcap_min:10000
+- "under 20k" / "below 20k" / "less than 20k" = mcap_max:20000
+
+TIMEFRAME RULES:
+- "last hour" / "1h" / "1 hour" = "1h"
+- "5 minutes" / "5m" = "5m"
+- "6 hours" / "6h" = "6h"
+- "24 hours" / "24h" / "today" / "daily" = "24h"
+
+SMART FILTER vs KEYWORD WATCH:
+- If criteria is NUMERICAL (mcap, liq, volume, % change) → smart_filter
+- If criteria is THEMATIC (dog coins, animal memes, trump tokens) → keyword_watch
+
+SCUBY REPLY RULES:
+- For action intents (smart_filter, feed, keyword_watch, monitor, price_alert, reminder): write an enthusiastic
+  Scuby-Doo confirmation. Be specific. No command suggestions at the end.
+- For screener, sniff, cancel, status: short Scuby transition like "On it, Raggy! 🐾"
+- For chat: null (will use full conversation AI instead)
+- confidence < 0.55: use intent "chat", scuby_reply null
+
+Return this JSON schema:
+{
+  "intent": string,
+  "confidence": float 0.0-1.0,
+  "params": object,
+  "scuby_reply": string or null
+}
+
+EXAMPLES:
+"watch for new pairs that exceed 10k mcap but within 20k mcap" →
+{"intent":"smart_filter","confidence":0.97,"params":{"mcap_min":10000,"mcap_max":20000,"age_max_minutes":60},"scuby_reply":"Scuby-Duby-Doo! 🐾 Sniffing for every new Solana pair with MCap $10K–$20K — I'll send them straight to you! ⚠️ DYOR!"}
+
+"remind me in 2 hours to check my portfolio" →
+{"intent":"reminder","confidence":0.97,"params":{"time_str":"2h","message":"check my portfolio"},"scuby_reply":"Rooby-Rooby-Roo! ⏰ I'll ping you in 2 hours, Raggy!"}
+
+"alert me when bonk hits 3x" →
+{"intent":"price_alert","confidence":0.95,"params":{"ticker_or_ca":"BONK","target_multiple":3},"scuby_reply":"Zoinks! 🔔 Alert set for BONK at 3x — I'll DM you the moment it hits! 🐾"}
+
+"show me what's pumping right now" →
+{"intent":"screener","confidence":0.9,"params":{"direction":"up","threshold":20,"timeframe":"1h"},"scuby_reply":"On it, Raggy! 🚀"}
+
+"what is a rug pull" →
+{"intent":"chat","confidence":0.99,"params":{},"scuby_reply":null}
+
+"stop all my filters" →
+{"intent":"cancel","confidence":0.95,"params":{"target":"all","identifier":null},"scuby_reply":"On it, Raggy! 🐾 Clearing everything up!"}
+"""
+
+# ─── Conversation history ─────────────────────────────────────────────────────
+
+_conversations: dict[int, list[dict]] = {}
+_MAX_HISTORY = 10
+
+
+def _get_history(user_id: int) -> list[dict]:
+    return _conversations.setdefault(user_id, [])
+
+
+def _push_history(user_id: int, role: str, content: str) -> None:
+    h = _get_history(user_id)
+    h.append({"role": role, "content": content})
+    if len(h) > _MAX_HISTORY * 2:
+        _conversations[user_id] = h[-(_MAX_HISTORY * 2):]
+
+
+def clear_history(user_id: int) -> None:
+    _conversations.pop(user_id, None)
+
+
+# ─── Groq API caller (primary) ────────────────────────────────────────────────
+
+async def _groq_call(
+    system: str,
+    messages: list[dict],
+    max_tokens: int = 500,
+    json_mode: bool = False,
+    fast: bool = False,
+) -> str:
+    api_key = os.environ.get("GROQ_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY not set")
+
+    # llama-3.1-8b-instant: 30K TPM free tier — use for intent (fast=True) and chat
+    model = "llama-3.1-8b-instant"
+
+    payload: dict = {
+        "model":      model,
+        "max_tokens": max_tokens,
+        "messages":   [{"role": "system", "content": system}] + messages,
+    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+
+    sem = _get_groq_semaphore()
+
+    for attempt in range(_GROQ_MAX_RETRIES + 1):
+        wait_secs: float | None = None
+
+        async with sem:
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    resp = await client.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json=payload,
+                    )
+
+                    if resp.status_code == 429:
+                        retry_after = resp.headers.get("retry-after")
+                        wait_secs   = float(retry_after) if retry_after else _GROQ_BACKOFF_BASE * (2 ** attempt)
+                        wait_secs   = min(wait_secs, 30)
+                        logger.warning(
+                            f"Groq 429 (attempt {attempt+1}/{_GROQ_MAX_RETRIES+1}) "
+                            f"— retrying in {wait_secs:.0f}s"
+                        )
+                        if attempt >= _GROQ_MAX_RETRIES:
+                            raise httpx.HTTPStatusError(
+                                "429 Too Many Requests",
+                                request=resp.request,
+                                response=resp,
+                            )
+                        # fall through to sleep below (semaphore released first)
+                    else:
+                        resp.raise_for_status()
+                        return resp.json()["choices"][0]["message"]["content"].strip()
+
+            except httpx.HTTPStatusError:
+                raise
+            except Exception as exc:
+                if attempt >= _GROQ_MAX_RETRIES:
+                    raise
+                wait_secs = _GROQ_BACKOFF_BASE * (2 ** attempt)
+                logger.warning(f"Groq error (attempt {attempt+1}): {exc} — retrying in {wait_secs:.0f}s")
+
+        # Semaphore released — safe to sleep without blocking other users
+        if wait_secs:
+            await asyncio.sleep(wait_secs)
+
+    raise RuntimeError("Groq call failed after all retries")
+
+
+# ─── Gemini API caller (secondary fallback) ───────────────────────────────────
+
+_GEMINI_SEMAPHORE: asyncio.Semaphore | None = None
+_GEMINI_LAST_CALL: float = 0.0
+_GEMINI_MIN_DELAY: float = 4.0   # max ~15 RPM with headroom
+
+
+def _get_gemini_semaphore() -> asyncio.Semaphore:
+    global _GEMINI_SEMAPHORE
+    if _GEMINI_SEMAPHORE is None:
+        _GEMINI_SEMAPHORE = asyncio.Semaphore(1)
+    return _GEMINI_SEMAPHORE
+
+
+async def _gemini_call(system: str, messages: list[dict], max_tokens: int = 500) -> str:
+    global _GEMINI_LAST_CALL
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY not set")
+
+    gemini_msgs = []
+    for m in messages:
+        role = "user" if m["role"] == "user" else "model"
+        gemini_msgs.append({"role": role, "parts": [{"text": m["content"]}]})
+    if gemini_msgs and gemini_msgs[0]["role"] == "user":
+        gemini_msgs[0]["parts"][0]["text"] = f"{system}\n\n{gemini_msgs[0]['parts'][0]['text']}"
+    else:
+        gemini_msgs.insert(0, {"role": "user",  "parts": [{"text": system}]})
+        gemini_msgs.insert(1, {"role": "model", "parts": [{"text": "Understood. Ready."}]})
+
+    payload = {
+        "contents": gemini_msgs,
+        "generationConfig": {
+            "maxOutputTokens": max_tokens,
+            "temperature": 0.7,
+        },
+        "safetySettings": [
+            {"category": "HARM_CATEGORY_HARASSMENT",        "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH",       "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+        ],
+    }
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key={api_key}"
+
+    async with _get_gemini_semaphore():
+        now = asyncio.get_event_loop().time()
+        gap = now - _GEMINI_LAST_CALL
+        if gap < _GEMINI_MIN_DELAY:
+            await asyncio.sleep(_GEMINI_MIN_DELAY - gap)
+        _GEMINI_LAST_CALL = asyncio.get_event_loop().time()
+
+        for attempt in range(4):
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    resp = await client.post(url, json=payload)
+                    if resp.status_code == 429:
+                        wait = 15 * (2 ** attempt)
+                        logger.warning(f"Gemini 429 (attempt {attempt+1}/4) — retrying in {wait}s")
+                        await asyncio.sleep(wait)
+                        continue
+                    resp.raise_for_status()
+                    data = resp.json()
+                    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            except Exception as e:
+                if attempt < 3:
+                    await asyncio.sleep(5)
+                    continue
+                raise
+    raise RuntimeError("Gemini call failed after all retries")
+
+
+# ─── Unified AI dispatcher — Groq always first ───────────────────────────────
+
+async def _call_ai(
+    system: str,
+    messages: list[dict],
+    max_tokens: int = 500,
+    json_mode: bool = False,
+    fast: bool = False,
+) -> str:
+    """
+    Call AI with Groq as primary, Gemini as fallback.
+    - If AI_PROVIDER is explicitly set, respect it strictly.
+    - If auto-detected, try Groq first; fall back to Gemini on hard failure.
+    """
+    if AI_PROVIDER == "groq":
+        return await _groq_call(system, messages, max_tokens, json_mode, fast=fast)
+
+    if AI_PROVIDER == "gemini":
+        return await _gemini_call(system, messages, max_tokens)
+
+    raise RuntimeError(f"Unknown or unconfigured AI_PROVIDER: {AI_PROVIDER}")
+
+
+# ─── Intent understanding ─────────────────────────────────────────────────────
+
+async def understand_intent(text: str) -> dict:
+    """
+    Classify the user's message into a structured intent with params.
+    Returns a dict with: intent, confidence, params, scuby_reply
+    Falls back to {"intent": "chat"} on any error.
+    """
+    if AI_PROVIDER == "local":
+        return {"intent": "chat", "confidence": 1.0, "params": {}, "scuby_reply": None}
+
+    raw = ""
+    try:
+        raw = await _call_ai(
+            _INTENT_SYSTEM,
+            [{"role": "user", "content": text}],
+            max_tokens=400,
+            json_mode=True,
+            fast=True,
+        )
+        raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
+        data = json.loads(raw)
+        data.setdefault("intent", "chat")
+        data.setdefault("confidence", 0.5)
+        data.setdefault("params", {})
+        data.setdefault("scuby_reply", None)
+        if data["confidence"] < 0.55:
+            data["intent"] = "chat"
+        return data
+    except Exception as e:
+        logger.warning(f"understand_intent failed: {e} | raw={raw!r}")
+        return {"intent": "chat", "confidence": 0.0, "params": {}, "scuby_reply": None}
+
+
+# ─── Conversational chat ──────────────────────────────────────────────────────
+
+async def scuby_chat(user_id: int, user_message: str, user_memory: dict | None = None) -> str:
+    if AI_PROVIDER == "local":
+        return _canned_reply(user_message)
+
+    if user_memory is not None:
+        try:
+            from memory import (
+                push_conversation, get_conversation, build_memory_context,
+                update_user_seen,
+            )
+            update_user_seen(user_memory, user_id)
+            push_conversation(user_memory, user_id, "user", user_message)
+            messages      = get_conversation(user_memory, user_id)
+            memory_ctx    = build_memory_context(user_memory, user_id)
+            system_prompt = memory_ctx + _SCUBY_SYSTEM if memory_ctx else _SCUBY_SYSTEM
+        except Exception as mem_err:
+            logger.warning(f"scuby_chat: memory module error: {mem_err}")
+            _push_history(user_id, "user", user_message)
+            messages      = list(_get_history(user_id))
+            system_prompt = _SCUBY_SYSTEM
+    else:
+        _push_history(user_id, "user", user_message)
+        messages      = list(_get_history(user_id))
+        system_prompt = _SCUBY_SYSTEM
+
+    try:
+        reply = await _call_ai(system_prompt, messages, max_tokens=300)
+        if user_memory is not None:
+            try:
+                from memory import push_conversation
+                push_conversation(user_memory, user_id, "assistant", reply)
+            except Exception:
+                pass
+        else:
+            _push_history(user_id, "assistant", reply)
+        return reply
+    except Exception as e:
+        logger.error(f"scuby_chat error ({type(e).__name__}): {e}", exc_info=True)
+        return "Zoinks! 🐾 Scuby's brain hiccuped. Try again in a moment, Raggy!"
+
+
+# ─── Smart filter parser ──────────────────────────────────────────────────────
+
+_FILTER_SYSTEM = (
+    "You are a JSON parser. The user describes a Solana token filter. "
+    "Return ONLY valid JSON, no markdown, no explanation.\n"
+    "Schema: {mcap_min:number|null, mcap_max:number|null, liq_min:number|null, "
+    "liq_max:number|null, age_max_minutes:number|null, pct_change_min:number|null, "
+    "pct_change_max:number|null, vol_min_1h:number|null, label:string}\n"
+    "Rules: k=thousands, m=millions. new=age_max_minutes 60. very new=30. "
+    "Always include a short descriptive label. Null for unmentioned fields."
+)
+
+
+def _parse_value(num_str: str, suffix: str) -> float:
+    v = float(num_str.replace(",", ""))
+    s = (suffix or "").lower()
+    return v * (1_000 if s == "k" else 1_000_000 if s == "m" else 1)
+
+
+def _fmt(v: float) -> str:
+    if v >= 1_000_000: return f"${v/1_000_000:.1f}M"
+    if v >= 1_000:     return f"${v/1_000:.0f}K"
+    return f"${v:.0f}"
+
+
+def _regex_parse_filter(description: str) -> dict:
+    text = description.lower()
+    flt: dict = {k: None for k in ["mcap_min","mcap_max","liq_min","liq_max",
+                                     "age_max_minutes","pct_change_min","pct_change_max","vol_min_1h"]}
+    flt["label"] = description[:60]
+    NUM = r"(\d[\d,.]*)\s*(k|m)?"
+
+    m = re.search(rf"(?:mcap|market\s*cap|cap).*?{NUM}\s+(?:and|to|-|but\s+within|but\s+under)\s+{NUM}", text, re.IGNORECASE)
+    if m:
+        flt["mcap_min"] = _parse_value(m.group(1), m.group(2))
+        flt["mcap_max"] = _parse_value(m.group(3), m.group(4))
+
+    if flt["mcap_min"] is None:
+        m = re.search(rf"(?:exceed|above|over|more\s+than|>|pass)\s*{NUM}.*?(?:mcap|cap)", text, re.IGNORECASE)
+        if not m:
+            m = re.search(rf"(?:mcap|cap).*?(?:exceed|above|over|more\s+than|>)\s*{NUM}", text, re.IGNORECASE)
+        if m:
+            flt["mcap_min"] = _parse_value(m.group(1), m.group(2))
+
+    if flt["mcap_max"] is None:
+        m = re.search(rf"(?:within|below|under|less\s+than|<)\s*{NUM}.*?(?:mcap|cap)?", text, re.IGNORECASE)
+        if not m:
+            m = re.search(rf"(?:mcap|cap).*?(?:within|below|under|less\s+than|<)\s*{NUM}", text, re.IGNORECASE)
+        if m:
+            flt["mcap_max"] = _parse_value(m.group(1), m.group(2))
+
+    m = re.search(rf"liq(?:uidity)?\s+(?:above|over|of\s+over|at\s+least|>)?\s*{NUM}", text, re.IGNORECASE)
+    if m:
+        flt["liq_min"] = _parse_value(m.group(1), m.group(2))
+
+    if re.search(r"very\s+new|just\s+launched|super\s+new", text):
+        flt["age_max_minutes"] = 30
+    elif re.search(r"\bnew\b|fresh|recent|newly", text):
+        flt["age_max_minutes"] = 60
+
+    m = re.search(r"up\s+(?:more\s+than\s+|above\s+|over\s+)?(\d+)\s*(?:%|percent)", text, re.IGNORECASE)
+    if m:
+        flt["pct_change_min"] = float(m.group(1))
+
+    m = re.search(rf"vol(?:ume)?\s+(?:above|over|>)?\s*{NUM}", text, re.IGNORECASE)
+    if m:
+        flt["vol_min_1h"] = _parse_value(m.group(1), m.group(2))
+
+    parts = []
+    if flt["mcap_min"] is not None and flt["mcap_max"] is not None:
+        parts.append(f"MCap {_fmt(flt['mcap_min'])}–{_fmt(flt['mcap_max'])}")
+    elif flt["mcap_max"] is not None:
+        parts.append(f"MCap <{_fmt(flt['mcap_max'])}")
+    elif flt["mcap_min"] is not None:
+        parts.append(f"MCap >{_fmt(flt['mcap_min'])}")
+    if flt.get("pct_change_min"):
+        parts.append(f"+{flt['pct_change_min']:.0f}% 1h")
+    if flt.get("age_max_minutes"):
+        parts.append(f"<{flt['age_max_minutes']}m old")
+    if parts:
+        flt["label"] = " · ".join(parts)
+
+    return flt
+
+
+async def parse_smart_filter(description: str) -> dict | None:
+    if AI_PROVIDER == "local":
+        return _regex_parse_filter(description)
+    raw = ""
+    try:
+        raw = await _call_ai(_FILTER_SYSTEM, [{"role": "user", "content": description}], max_tokens=250, json_mode=True, fast=True)
+        raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
+        data = json.loads(raw)
+        data.setdefault("label", description[:50])
+        return data
+    except json.JSONDecodeError:
+        return _regex_parse_filter(description)
+    except Exception as e:
+        logger.warning(f"parse_smart_filter failed: {e}")
+        return _regex_parse_filter(description)
+
+
+# ─── Canned fallback responses (local mode) ──────────────────────────────────
+
+_CANNED: dict[str, str] = {
+    "mcap": "Ruh-roh! 📊 MCap = price × supply. Low MCap = higher risk but more room to grow. Always check liq vs MCap! 🐾\n\n⚠️ DYOR, Raggy!",
+    "liquidity": "Hehehe! 💧 Liquidity = how easy it is to buy/sell without slippage. Under $5K liq? The spread will eat you alive! 🐾\n\n⚠️ DYOR!",
+    "rug": "Zoinks! 🚨 Rug = devs drain the LP and vanish. Check: locked LP, revoked mint, real socials, no giant dev wallet. 🐾\n\n⚠️ DYOR!",
+    "og": "Scuby-Duby-Doo! 🏆 OG = the FIRST token with that ticker on Solana. Copycats ride the hype. The OG has the real community! 🐾",
+    "default": (
+        "Ruh-roh! 🐾 Scuby is running in local mode — no AI key detected.\n\n"
+        "Set GROQ_API_KEY in your .env for full AI chat! (It's free at console.groq.com)\n"
+        "I can still sniff tokens — drop a $TICKER anytime!"
+    ),
+}
+
+
+def _canned_reply(text: str) -> str:
+    text_lower = text.lower()
+    for k, v in _CANNED.items():
+        if k != "default" and k in text_lower:
+            return v
+    return _CANNED["default"]
