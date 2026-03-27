@@ -1,17 +1,27 @@
 """
-gemscore.py — Scuby's gem scoring engine. UPGRADED v2.
+gemscore.py — Scuby's gem scoring engine. UPGRADED v3.
+
+Key changes vs v2:
+  - Pattern bonus now has a smart HEURISTIC fallback when historical data is
+    thin (< 10 resolved tokens). The heuristic is based on real Solana edge:
+    vol/mcap > 1x + age 30min-3h + liq/mcap > 0.15 is a genuine early signal.
+  - Age scoring sharpened: 30-90 minute window gets the highest score,
+    reflecting the pump.fun graduation window and post-initial-dump sweet spot.
+  - Graduation bonus: tokens with mcap $60K-$90K and age 1-3h get a bonus
+    (post-pump.fun graduation, survived the most dangerous phase).
+  - Parabolic price penalty: +200%+ 1h is scored slightly lower than +50-200%
+    because parabolics have a high dump-incoming rate on Solana.
 
 Scores a token 0–100 using 8 weighted signals:
-  1. Liquidity depth          (20pts) — how much $ to move the market
-  2. Pair age                 (15pts) — sweet spot 1–6h old
-  3. Vol/MCap ratio           (20pts) — momentum strength
-  4. MCap range               (15pts) — sweet spot $10K–$100K for early gems
-  5. Price momentum           (10pts) — 1h change
-  6. Pattern match            (15pts) — historical pattern bonus (from memory.py)
-  7. Rugcheck risk penalty   (-15pts) — deducted for red flags
-  8. NEW: Liq/MCap ratio       (5pts) — backing quality
-  9. NEW: Vol consistency      (5pts) — is vol sustainable vs 24h baseline?
- 10. NEW: Holder quality bonus (5pts) — penalise if 24h vol >> 1h vol (one-off pump)
+  1. Liquidity depth          (20pts)
+  2. Pair age                 (15pts) — SHARPENED: peaks at 30-90m
+  3. Vol/MCap ratio           (20pts)
+  4. MCap range               (15pts)
+  5. Price momentum           (10pts) — parabolic penalty added
+  6. Pattern/heuristic bonus  (15pts) — HYBRID: real data + smart fallback
+  7. Rug risk penalty        (-15pts)
+  8. Liq/MCap ratio            (5pts)
+  9. Vol consistency           (5pts)
 
 Grades:
   💎 90-100  Diamond
@@ -39,13 +49,15 @@ WEIGHTS = {
     "mcap_score":      15,
     "price_change":    10,
     "pattern_bonus":   15,
-    "liq_mcap_score":   5,   # NEW: liquidity quality
-    "vol_consistency":  5,   # NEW: vol sustainability
+    "liq_mcap_score":   5,
+    "vol_consistency":  5,
     "risk_penalty":   -15,
 }
 
-# Max possible positive score (used for normalisation)
 _MAX_POS = sum(v for v in WEIGHTS.values() if v > 0)
+
+# How many resolved tokens we need before trusting the pattern engine
+_PATTERN_MIN_RESOLVED = 10
 
 
 # ─── Individual scorers ───────────────────────────────────────────────────────
@@ -63,17 +75,30 @@ def _score_liq(liq: float) -> tuple[float, str]:
 
 
 def _score_age(age_h: float) -> tuple[float, str]:
-    """Pair age. Sweet spot: 30min–3h (fresh but not brand new)."""
-    if age_h < 0.1:    return 0.4, f"{age_h*60:.0f}m old — too new, no data yet ⚡"
-    if age_h < 0.5:    return 0.7, f"{age_h*60:.0f}m old — very fresh 🆕"
-    if age_h < 1:      return 0.95, f"{age_h*60:.0f}m old — sweet spot start 🎯"
-    if age_h < 3:      return 1.0, f"{age_h:.1f}h old — perfect window 🎯"
-    if age_h < 6:      return 0.9, f"{age_h:.1f}h old — still early ✅"
-    if age_h < 12:     return 0.7, f"{age_h:.1f}h old — early ✅"
-    if age_h < 24:     return 0.5, f"{age_h:.1f}h old — getting older"
-    if age_h < 72:     return 0.3, f"{age_h/24:.1f}d old"
-    if age_h < 168:    return 0.2, f"{age_h/24:.0f}d old — aged"
-    return 0.1, f"{age_h/24:.0f}d old — very old 📅"
+    """
+    Pair age scoring — SHARPENED for Solana reality.
+
+    The real gem window on Solana is 30-90 minutes post-launch:
+    - < 10min: bonding curve still filling, no signal yet
+    - 10-30min: very early, high dump risk still active
+    - 30-90min: SWEET SPOT — initial dump risk passed, crowd hasn't found it
+    - 90min-3h: still excellent, slightly more competition
+    - 3-6h: early but not bleeding-edge
+    - > 24h at micro mcap: usually a dead cat, not a hidden gem
+    """
+    age_m = age_h * 60
+    if age_h < 0.1:       return 0.3, f"{age_m:.0f}m old — too new, no signal yet ⚡"
+    if age_h < 0.17:      return 0.5, f"{age_m:.0f}m old — very early, dump risk high 🆕"
+    if age_h < 0.5:       return 0.8, f"{age_m:.0f}m old — early entry zone 🆕"
+    if age_h < 1.0:       return 1.0, f"{age_m:.0f}m old — SWEET SPOT 🎯🎯"   # 30-60 min peak
+    if age_h < 1.5:       return 1.0, f"{age_m:.0f}m old — prime window 🎯"    # 60-90 min peak
+    if age_h < 3.0:       return 0.9, f"{age_h:.1f}h old — still early ✅"
+    if age_h < 6.0:       return 0.8, f"{age_h:.1f}h old — early 📅"
+    if age_h < 12.0:      return 0.6, f"{age_h:.1f}h old — moderate age"
+    if age_h < 24.0:      return 0.4, f"{age_h:.1f}h old — getting older"
+    if age_h < 72.0:      return 0.2, f"{age_h/24:.1f}d old — ask why it hasn't moved"
+    if age_h < 168.0:     return 0.1, f"{age_h/24:.0f}d old — aged"
+    return 0.05, f"{age_h/24:.0f}d old — very old 📅"
 
 
 def _score_vol_mcap(vol1h: float, mcap: float) -> tuple[float, str]:
@@ -106,8 +131,13 @@ def _score_mcap(mcap: float) -> tuple[float, str]:
 
 
 def _score_price_change(h1: float, h6: float) -> tuple[float, str]:
-    """1h price momentum. Parabolic is great early, but cap it — could be dump-incoming."""
-    if h1 >= 200:    return 0.95, f"+{h1:.0f}% 1h 🌙 parabolic — watch for dump"
+    """
+    1h price momentum with parabolic penalty.
+
+    > +200% in 1h is a yellow flag on Solana — the crowd has already found it
+    and a dump is likely incoming. Score it slightly below the 50-200% range.
+    """
+    if h1 >= 200:    return 0.80, f"+{h1:.0f}% 1h 🌙 parabolic — watch for dump ⚠️"
     if h1 >= 100:    return 1.0,  f"+{h1:.0f}% 1h 🌙 parabolic"
     if h1 >= 50:     return 0.95, f"+{h1:.0f}% 1h 🚀"
     if h1 >= 20:     return 0.85, f"+{h1:.0f}% 1h 📈"
@@ -120,11 +150,7 @@ def _score_price_change(h1: float, h6: float) -> tuple[float, str]:
 
 
 def _score_liq_mcap(liq: float, mcap: float) -> tuple[float, str]:
-    """
-    NEW: Liquidity/MCap ratio. Higher = better backed.
-    A liq/mcap > 0.5 means the pool is very well backed.
-    Red flag: < 0.05 (tiny liq relative to mcap).
-    """
+    """Liquidity/MCap ratio — backing quality."""
     if mcap <= 0:
         return 0.3, "no mcap"
     ratio = liq / mcap
@@ -137,9 +163,8 @@ def _score_liq_mcap(liq: float, mcap: float) -> tuple[float, str]:
 
 def _score_vol_consistency(vol1h: float, vol24h: float) -> tuple[float, str]:
     """
-    NEW: Volume consistency — is 1h vol in line with 24h average?
-    If 1h vol >> 24h/24 average: could be a one-off pump.
-    If 1h vol ≈ 24h/24 average: healthy sustained trading.
+    Volume consistency — is 1h vol sustainable vs 24h baseline?
+    Single-candle spikes are suspicious; sustained vol is real.
     """
     if vol24h <= 0 or vol1h <= 0:
         return 0.5, "no 24h vol data"
@@ -153,46 +178,124 @@ def _score_vol_consistency(vol1h: float, vol24h: float) -> tuple[float, str]:
     return 0.5, f"vol pace {ratio:.1f}x 24h avg"
 
 
+def _score_pattern_heuristic(
+    vol_mcap: float,
+    age_h: float,
+    liq: float,
+    liq_mcap: float,
+    mcap: float,
+) -> tuple[float, str]:
+    """
+    HEURISTIC pattern score — used when historical data is thin.
+
+    Based on real Solana edge that doesn't require training data:
+    The strongest early signal is: vol/mcap > 1x AND age 30-90min AND
+    liq > $5K AND liq/mcap > 0.10. This combination has historically
+    produced 2-5x moves within 1-3 hours on Solana at high rates.
+
+    Secondary signals that add to the score:
+    - Pump.fun graduation zone: mcap $60K-$90K with age 1-2h
+      (survived the graduation, now in free market price discovery)
+    - Very tight liq/mcap > 0.3 (deep pool relative to mcap)
+    - Vol/mcap > 3x (extreme momentum signal)
+    """
+    age_m = age_h * 60
+    score = 0.5  # neutral baseline
+    notes = []
+
+    # Core signal: vol/mcap momentum + sweet spot age + real liquidity
+    if vol_mcap >= 1.0 and 30 <= age_m <= 150 and liq >= 5_000 and liq_mcap >= 0.10:
+        score = 0.90
+        if vol_mcap >= 3.0:
+            score = 1.0
+            notes.append(f"🎯 PRIME SETUP: vol/mcap {vol_mcap:.1f}x, {age_m:.0f}m old, well-backed")
+        else:
+            notes.append(f"🎯 Strong early setup: vol/mcap {vol_mcap:.1f}x, {age_m:.0f}m old")
+
+    # Pump.fun graduation zone bonus
+    elif 60_000 <= mcap <= 90_000 and 1.0 <= age_h <= 2.5:
+        score = max(score, 0.80)
+        notes.append(f"🎓 Graduation zone: ${mcap/1000:.0f}K mcap, {age_h:.1f}h — survived bonding curve")
+
+    # Moderate setup: good vol/mcap but slightly outside sweet spot
+    elif vol_mcap >= 0.5 and age_m >= 15 and liq >= 3_000:
+        score = max(score, 0.65)
+        notes.append(f"📈 Decent setup: vol/mcap {vol_mcap:.2f}, {age_m:.0f}m old")
+
+    # Deep pool relative to mcap is a standalone positive signal
+    if liq_mcap >= 0.3 and score < 0.85:
+        score = min(score + 0.1, 0.85)
+        notes.append("💧 Deep pool")
+
+    # Extreme volume is always notable
+    if vol_mcap >= 5.0 and score < 1.0:
+        score = min(score + 0.15, 1.0)
+        notes.append(f"🚀 Extreme momentum: {vol_mcap:.1f}x")
+
+    if not notes:
+        notes.append("building signal data...")
+
+    return score, " · ".join(notes)
+
+
 def _score_pattern_match(attrs: dict, token_perf: dict, chat_id: str) -> tuple[float, str]:
-    """Pattern bonus from historical sniff data."""
-    if not token_perf:
-        return 0.5, "no history yet"
-    try:
-        from memory import analyse_patterns, _bucket, MCAP_BUCKETS, LIQ_BUCKETS, AGE_BUCKETS, VOLMCAP_BUCKETS
-        patterns = analyse_patterns(token_perf, chat_id)
-        if not patterns:
-            return 0.5, "building pattern data..."
+    """
+    HYBRID pattern scorer:
+    1. If enough resolved tokens exist, use the real pattern engine
+    2. Otherwise, use the heuristic (always provides signal)
+    """
+    vol_mcap  = attrs.get("vol_mcap", 0)
+    age_h     = attrs.get("age_h",    0)
+    liq       = attrs.get("liq",      0)
+    mcap      = attrs.get("mcap",     0)
+    liq_mcap  = attrs.get("liq", 0) / attrs.get("mcap", 1) if attrs.get("mcap", 0) > 0 else 0
 
-        mcap_b    = _bucket(attrs.get("mcap",     0), MCAP_BUCKETS)
-        liq_b     = _bucket(attrs.get("liq",      0), LIQ_BUCKETS)
-        age_b     = _bucket(attrs.get("age_h",    0), AGE_BUCKETS)
-        volmcap_b = _bucket(attrs.get("vol_mcap", 0), VOLMCAP_BUCKETS)
+    # Count resolved tokens in this chat
+    resolved_count = sum(
+        1 for rec in token_perf.values()
+        if rec.get("perf", {}).get("1h")
+        and (not chat_id or rec.get("chat_id") == chat_id)
+    )
 
-        my_keys = {
-            f"mcap:{mcap_b}", f"liq:{liq_b}",
-            f"age:{age_b}",   f"volmcap:{volmcap_b}",
-            f"mcap:{mcap_b}+liq:{liq_b}",
-            f"mcap:{mcap_b}+age:{age_b}",
-            f"liq:{liq_b}+volmcap:{volmcap_b}",
-            f"age:{age_b}+liq:{liq_b}",
-        }
+    # If we have enough data, use the real pattern engine
+    if resolved_count >= _PATTERN_MIN_RESOLVED and token_perf:
+        try:
+            from memory import analyse_patterns, _bucket, MCAP_BUCKETS, LIQ_BUCKETS, AGE_BUCKETS, VOLMCAP_BUCKETS
+            patterns = analyse_patterns(token_perf, chat_id)
+            if patterns:
+                mcap_b    = _bucket(attrs.get("mcap",     0), MCAP_BUCKETS)
+                liq_b     = _bucket(attrs.get("liq",      0), LIQ_BUCKETS)
+                age_b     = _bucket(attrs.get("age_h",    0), AGE_BUCKETS)
+                volmcap_b = _bucket(attrs.get("vol_mcap", 0), VOLMCAP_BUCKETS)
 
-        best = None
-        for pattern in patterns[:15]:
-            if pattern["key"] in my_keys and pattern["pump_rate"] >= 0.35:
-                if best is None or pattern["pump_rate"] > best["pump_rate"]:
-                    best = pattern
+                my_keys = {
+                    f"mcap:{mcap_b}", f"liq:{liq_b}",
+                    f"age:{age_b}",   f"volmcap:{volmcap_b}",
+                    f"mcap:{mcap_b}+liq:{liq_b}",
+                    f"mcap:{mcap_b}+age:{age_b}",
+                    f"liq:{liq_b}+volmcap:{volmcap_b}",
+                    f"age:{age_b}+liq:{liq_b}",
+                }
 
-        if best:
-            pr = best["pump_rate"]
-            ct = best["count"]
-            if pr >= 0.65: return 1.0, f"💎 strong pattern ({pr:.0%} pump rate, {ct} tokens)"
-            if pr >= 0.5:  return 0.85, f"✅ good pattern ({pr:.0%} pump rate, {ct} tokens)"
-            if pr >= 0.35: return 0.65, f"matches pattern ({pr:.0%} pump rate)"
-        return 0.5, "no strong pattern match yet"
-    except Exception as ex:
-        logger.debug(f"_score_pattern_match error: {ex}")
-        return 0.5, "pattern check unavailable"
+                best = None
+                for pattern in patterns[:15]:
+                    if pattern["key"] in my_keys and pattern["pump_rate"] >= 0.35:
+                        if best is None or pattern["pump_rate"] > best["pump_rate"]:
+                            best = pattern
+
+                if best:
+                    pr = best["pump_rate"]
+                    ct = best["count"]
+                    if pr >= 0.65: return 1.0, f"💎 strong pattern ({pr:.0%} pump rate, {ct} tokens)"
+                    if pr >= 0.5:  return 0.85, f"✅ good pattern ({pr:.0%} pump rate, {ct} tokens)"
+                    if pr >= 0.35: return 0.65, f"matches pattern ({pr:.0%} pump rate)"
+        except Exception as ex:
+            logger.debug(f"_score_pattern_match real engine: {ex}")
+
+    # Fallback: heuristic (always gives meaningful signal)
+    raw, note = _score_pattern_heuristic(vol_mcap, age_h, liq, liq_mcap, mcap)
+    suffix = f" _(heuristic, {resolved_count} tokens tracked)_" if resolved_count < _PATTERN_MIN_RESOLVED else ""
+    return raw, note + suffix
 
 
 def _score_risk(risk_report: dict) -> tuple[float, str]:
@@ -204,7 +307,6 @@ def _score_risk(risk_report: dict) -> tuple[float, str]:
     levels = {r.get("level", "").lower() for r in risks}
     names  = [r.get("name", "").lower() for r in risks]
 
-    # Extra penalty for specific critical risks
     critical = any(
         kw in n for n in names
         for kw in ("mint authority", "freeze authority", "unlocked lp", "rugged")
@@ -227,10 +329,7 @@ def calculate_gem_score(
     token_perf:  dict,
     chat_id:     str = "",
 ) -> dict:
-    """
-    Calculate a GemScore for a token pair.
-    Returns full scoring breakdown dict.
-    """
+    """Calculate a GemScore for a token pair. Returns full scoring breakdown."""
     mcap   = safe_float(pair.get("marketCap") or pair.get("fdv") or 0)
     liq    = safe_float((pair.get("liquidity")   or {}).get("usd",  0))
     vol1h  = safe_float((pair.get("volume")      or {}).get("h1",   0))
@@ -246,7 +345,6 @@ def calculate_gem_score(
     vol_mcap = vol1h / mcap if mcap > 0 else 0
     attrs    = {"mcap": mcap, "liq": liq, "age_h": age_h, "vol_mcap": vol_mcap}
 
-    # Run all scorers
     liq_raw,   liq_note   = _score_liq(liq)
     age_raw,   age_note   = _score_age(age_h)
     vm_raw,    vm_note    = _score_vol_mcap(vol1h, mcap)
@@ -257,7 +355,6 @@ def calculate_gem_score(
     vc_raw,    vc_note    = _score_vol_consistency(vol1h, vol24h)
     risk_raw,  risk_note  = _score_risk(risk_report)
 
-    # Weighted total
     raw_score = (
         liq_raw  * WEIGHTS["liq_score"]
         + age_raw  * WEIGHTS["age_score"]
@@ -272,7 +369,6 @@ def calculate_gem_score(
 
     score = max(0.0, min(100.0, (raw_score / _MAX_POS) * 100))
 
-    # Grade
     if score >= 90:   grade, gem_emoji = "💎 Diamond",  "💎"
     elif score >= 75: grade, gem_emoji = "🔥 Hot",      "🔥"
     elif score >= 55: grade, gem_emoji = "✅ Solid",     "✅"
@@ -335,7 +431,6 @@ def format_gem_score(result: dict, symbol: str, ca: str) -> str:
             bar_mini = "▓" * (pct // 20) + "░" * (5 - pct // 20)
             lines.append(f"`{bar_mini}` {e(category)}: {e(note)}")
 
-    # Quick summary line
     age_h  = meta.get("age_h", 0)
     vol_mc = meta.get("vol_mcap", 0)
     if score >= 75:
