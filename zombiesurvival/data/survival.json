@@ -1,0 +1,77 @@
+{
+  "cash": 95.0,
+  "health": 100,
+  "max_health": 100,
+  "hunger": 98,
+  "thirst": 97,
+  "wall_hp": 100,
+  "wall_max_hp": 100,
+  "day": 1,
+  "wave": 2,
+  "zombies_alive": 0,
+  "zombies_killed": 0,
+  "total_zombies_killed": 0,
+  "inventory": {
+    "pistol": 1
+  },
+  "equipped_weapon": "pistol",
+  "ammo": {
+    "9mm": 28
+  },
+  "position": "base",
+  "is_alive": true,
+  "cycle": 1,
+  "trades": 1,
+  "wins": 0,
+  "losses": 0,
+  "portfolio": [
+    {
+      "token": "CvepWqy7S6YngubvTxAUM4fQQr7bfduaZPYrL3PDpump",
+      "symbol": "9-5er",
+      "amount": 3729116.9451073986,
+      "buy_price": 6.704e-06,
+      "buy_mcap": 6387.0
+    }
+  ],
+  "last_tick": 1788166341.7775624,
+  "events": [
+    {
+      "text": "\ud83e\udddf WAVE 1: 1 zombies approaching! (Day 1)",
+      "type": "danger",
+      "time": "08:52:20",
+      "cycle": 1
+    },
+    {
+      "text": "\ud83d\udd2b Hit normal zombie for 15 damage! (15/30 HP)",
+      "type": "combat",
+      "time": "08:52:20",
+      "cycle": 1
+    },
+    {
+      "text": "\ud83d\udd2b \ud83d\udc80 Killed normal zombie! (-15 DMG)",
+      "type": "combat",
+      "time": "08:52:20",
+      "cycle": 1
+    },
+    {
+      "text": "\ud83d\udfe2 Bought 25 USD of 9-5er (MCap $6,387)",
+      "type": "trade",
+      "time": "08:52:21",
+      "cycle": 1
+    },
+    {
+      "text": "\u2705 Wave 1 cleared! +$20 bonus!",
+      "type": "success",
+      "time": "08:52:21",
+      "cycle": 1
+    }
+  ],
+  "turrets": 0,
+  "has_flashlight": false,
+  "has_energy_boost": false,
+  "energy_boost_ends": 0,
+  "zombie_positions": [],
+  "agent_x": 50,
+  "agent_y": 50,
+  "scene": "base"
+}

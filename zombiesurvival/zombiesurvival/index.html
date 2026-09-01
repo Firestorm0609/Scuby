@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ZOMBIE SURVIVAL — Pump.fun Agent</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Mono:wght@400;700&family=Inter:wght@300;400;600;700&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:#08090d;color:#e0e0e0;height:100vh;overflow:hidden;user-select:none}
+#app{display:flex;flex-direction:column;height:100vh}
+
+.hud{background:rgba(12,14,20,.96);border-bottom:1px solid #1a1d27;padding:6px 16px;display:flex;align-items:center;gap:16px;font-size:13px;z-index:100;flex-wrap:wrap}
+.hud-left{display:flex;align-items:center;gap:12px;flex:1}
+.hud-right{display:flex;align-items:center;gap:12px}
+.stat{display:flex;align-items:center;gap:4px}
+.stat-icon{font-size:16px}
+.stat-val{font-weight:700;font-family:'Space Mono',monospace}
+.pnl-pos{color:#00e676}.pnl-neg{color:#ff5252}
+.hp-bar{width:80px;height:10px;background:#14161e;border-radius:5px;overflow:hidden;border:1px solid #1a1d27}
+.hp-fill{height:100%;border-radius:5px;transition:width .5s}
+.hp-fill.green{background:linear-gradient(90deg,#00c853,#00e676)}
+.hp-fill.yellow{background:linear-gradient(90deg,#ff9100,#ffab40)}
+.hp-fill.red{background:linear-gradient(90deg,#d50000,#ff5252)}
+.hunger-fill{background:linear-gradient(90deg,#ff6d00,#ff9100)}
+.thirst-fill{background:linear-gradient(90deg,#2962ff,#448aff)}
+.wall-fill{background:linear-gradient(90deg,#424242,#757575)}
+.day-badge{background:#d50000;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700;font-family:'Press Start 2P',monospace;font-size:10px}
+.wave-badge{background:#ff6d00;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700;font-size:11px}
+
+.goal-bar{background:#0a0c12;border-bottom:1px solid #1a1d27;padding:4px 16px;display:flex;align-items:center;gap:12px;font-size:11px;font-family:'Space Mono',monospace}
+.goal-label{color:#ffab40;white-space:nowrap}
+.goal-track{flex:1;height:6px;background:#14161e;border-radius:3px;overflow:hidden;border:1px solid #1a1d27}
+.goal-fill{height:100%;background:linear-gradient(90deg,#ff6d00,#ffab40);border-radius:3px;transition:width 1s}
+.goal-text{color:#666;white-space:nowrap}
+
+.scene-wrap{flex:1;display:flex;position:relative;overflow:hidden}
+.scene{flex:1;position:relative;background:#0a0c12;overflow:hidden}
+
+/* Urgency vignette */
+.urgency-vignette{position:absolute;inset:0;pointer-events:none;z-index:40;opacity:0;transition:opacity 2s;background:radial-gradient(ellipse at center,transparent 20%,rgba(139,0,0,.15) 80%)}
+.urgency-vignette.active{opacity:1}
+
+/* Dust particles */
+.dust{position:absolute;width:2px;height:2px;background:#ffffff08;border-radius:50%;pointer-events:none;z-index:30;animation:dustFloat linear infinite}
+@keyframes dustFloat{0%{transform:translateY(0) translateX(0);opacity:0}20%{opacity:.3}80%{opacity:.3}100%{transform:translateY(-40px) translateX(20px);opacity:0}}
+
+/* Floor texture */
+.building{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:80%;height:82%;border:2px solid #1a1d27;border-radius:6px;background:#0f1117;background-image:repeating-linear-gradient(90deg,transparent,transparent 39px,#14161e15 39px,#14161e15 40px),repeating-linear-gradient(0deg,transparent,transparent 39px,#14161e15 39px,#14161e15 40px)}
+.building-label{position:absolute;top:-20px;left:50%;transform:translateX(-50%);font-family:'Press Start 2P',monospace;font-size:9px;color:#555;white-space:nowrap;letter-spacing:1px}
+.room{position:absolute;border:1px solid #14161e;background:#0c0e14}
+.room-label{position:absolute;top:4px;left:6px;font-size:8px;color:#444;font-family:'Press Start 2P',monospace;letter-spacing:1px}
+
+.desk{position:absolute;background:#1a1410;border:1px solid #333;border-radius:2px}
+.bed{position:absolute;background:#0e0a14;border:1px solid #222;border-radius:2px}
+.shelf{position:absolute;background:#141210;border:1px solid #333;border-radius:2px}
+.cpu{position:absolute;width:16px;height:26px;background:#1a1d27;border:1px solid #444;border-radius:2px}
+.cpu-fan{position:absolute;bottom:5px;left:50%;transform:translateX(-50%);width:8px;height:8px;border:1px solid #555;border-radius:50%;animation:fanSpin 2s linear infinite}
+@keyframes fanSpin{0%{transform:translateX(-50%) rotate(0)}100%{transform:translateX(-50%) rotate(360deg)}}
+.cpu-light{position:absolute;top:3px;left:50%;transform:translateX(-50%);width:3px;height:3px;background:#00e676;border-radius:50%;animation:cpuBlink 1.5s infinite alternate}
+@keyframes cpuBlink{0%{opacity:.3}100%{opacity:1}}
+
+/* ═══ BIG MONITORS ═══ */
+.monitor{position:absolute;background:#05070b;border:1px solid #448aff;border-radius:3px;overflow:hidden}
+.monitor-scanline{position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#448aff33,transparent);animation:scanline 4s linear infinite;pointer-events:none;z-index:2}
+@keyframes scanline{0%{top:-1px}100%{top:100%}}
+.monitor-content{width:100%;height:100%;padding:4px;font-family:'Space Mono',monospace;font-size:6px;line-height:1.5;overflow:hidden;color:#ccc;position:relative;z-index:1}
+.monitor-flash{position:absolute;inset:0;pointer-events:none;z-index:3;opacity:0;transition:opacity .3s}
+.monitor-flash.buy{background:rgba(0,230,118,.1);opacity:1}
+.monitor-flash.sell{background:rgba(255,82,82,.1);opacity:1}
+.monitor-title{font-size:7px;font-weight:700;letter-spacing:1px;margin-bottom:2px;border-bottom:1px solid #1a1d27;padding-bottom:2px}
+
+.gun-rack{position:absolute;background:#2a1a0a;border:1px solid #555;border-radius:2px;display:flex;align-items:center;justify-content:center}
+.dispenser{position:absolute;border-radius:4px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:3px}
+.dispenser-label{font-size:7px;color:#888;font-family:'Space Mono',monospace;text-align:center;margin-top:2px}
+.food-disp{background:#1a1410;border:1px solid #cc6600}
+.water-disp{background:#0a1420;border:1px solid #2962ff}
+.elec-box{position:absolute;width:18px;height:22px;background:#1a1d27;border:1px solid #ffab40;border-radius:2px}
+.elec-bolt{font-size:10px;color:#ffab40;text-align:center;line-height:22px}
+
+/* CHARACTER */
+.char-wrap{position:absolute;z-index:15;transition:left 1s cubic-bezier(.4,0,.2,1),top 1s cubic-bezier(.4,0,.2,1)}
+.char-wrap svg{filter:drop-shadow(0 8px 24px rgba(0,0,0,.5));display:block}
+.char-hp{position:absolute;top:-6px;left:50%;transform:translateX(-50%);width:30px;height:3px;background:#14161e;border-radius:2px;overflow:hidden;border:1px solid #1a1d27}
+.char-hp-fill{height:100%;border-radius:2px;transition:width .5s}
+.walk-shadow{position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);width:24px;height:4px;background:rgba(0,0,0,.3);border-radius:50%;filter:blur(2px)}
+
+/* ANIMATIONS */
+@keyframes breathe{0%,100%{transform:translateY(0)}50%{transform:translateY(-1.5px)}}
+@keyframes headBob{0%,100%{transform:rotate(0deg)}25%{transform:rotate(1.5deg)}75%{transform:rotate(-1.5deg)}}
+@keyframes blink{0%,92%,100%{ry:2.5}95%{ry:0.3}}
+@keyframes armSwing{0%,100%{transform:rotate(0deg)}50%{transform:rotate(3deg)}}
+@keyframes typeLeft{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-2px) rotate(-4deg)}}
+@keyframes typeRight{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-2px) rotate(4deg)}}
+@keyframes panic{0%,100%{transform:translateX(0)}10%{transform:translateX(-2px)}20%{transform:translateX(2px)}30%{transform:translateX(-2px)}40%{transform:translateX(2px)}50%{transform:translateX(0)}}
+@keyframes walkBounce{0%,100%{transform:translateY(0) rotate(0deg)}25%{transform:translateY(-3px) rotate(-1deg)}50%{transform:translateY(0) rotate(0deg)}75%{transform:translateY(-3px) rotate(1deg)}}
+@keyframes walkArms{0%,100%{transform:rotate(0deg)}25%{transform:rotate(-12deg)}75%{transform:rotate(12deg)}}
+@keyframes walkLegL{0%,100%{transform:rotate(0deg)}25%{transform:rotate(-15deg)}75%{transform:rotate(15deg)}}
+@keyframes walkLegR{0%,100%{transform:rotate(0deg)}25%{transform:rotate(15deg)}75%{transform:rotate(-15deg)}}
+@keyframes shootRecoil{0%{transform:rotate(0)}40%{transform:rotate(-25deg)}100%{transform:rotate(0)}}
+@keyframes celebrate{0%,100%{transform:translateY(0)}25%{transform:translateY(-6px)}50%{transform:translateY(0)}75%{transform:translateY(-6px)}}
+@keyframes leanFwd{0%,100%{transform:rotate(0)}50%{transform:rotate(-3deg)}}
+@keyframes pace{0%,100%{transform:translateX(0) rotate(0deg)}25%{transform:translateX(2px) rotate(1deg)}50%{transform:translateX(0) rotate(0deg)}75%{transform:translateX(-2px) rotate(-1deg)}}
+@keyframes nervous{0%,85%,100%{transform:translateX(0)}88%{transform:translateX(-2px)}91%{transform:translateX(2px)}94%{transform:translateX(-1px)}}
+
+.state-idle .body-group{animation:breathe 3s ease-in-out infinite}
+.state-idle .head-group{animation:headBob 5s ease-in-out infinite}
+.state-idle .eye-l,.state-idle .eye-r{animation:blink 4s ease-in-out infinite}
+.state-idle .arm-l{animation:armSwing 4s ease-in-out infinite}
+.state-idle .arm-r{animation:armSwing 4s ease-in-out infinite 2s}
+.state-walking .body-group{animation:walkBounce .5s ease-in-out infinite}
+.state-walking .head-group{animation:headBob 1.5s ease-in-out infinite}
+.state-walking .arm-l{animation:walkArms .5s ease-in-out infinite}
+.state-walking .arm-r{animation:walkArms .5s ease-in-out infinite .25s}
+.state-walking .leg-l{animation:walkLegL .5s ease-in-out infinite}
+.state-walking .leg-r{animation:walkLegR .5s ease-in-out infinite .25s}
+.state-shooting .body-group{animation:breathe .3s ease-in-out infinite}
+.state-shooting .arm-r{animation:shootRecoil .15s ease-out 1}
+.state-hurt .body-group{animation:panic .3s ease-in-out infinite}
+.state-hurt .arm-l,.state-hurt .arm-r{animation:panic .4s ease-in-out infinite}
+.state-typing .body-group{animation:leanFwd 4s ease-in-out infinite}
+.state-typing .arm-l{animation:typeLeft .35s ease-in-out infinite}
+.state-typing .arm-r{animation:typeRight .35s ease-in-out infinite .15s}
+.state-celebrate .body-group{animation:celebrate .4s ease-in-out 3}
+.state-celebrate .arm-l{animation:walkArms .3s ease-in-out infinite}
+.state-celebrate .arm-r{animation:walkArms .3s ease-in-out infinite .15s}
+.state-nervous .body-group{animation:nervous 1s ease-in-out infinite}
+.state-nervous .head-group{animation:headBob 1.5s ease-in-out infinite}
+.state-pacing .body-group{animation:pace 2s ease-in-out infinite}
+
+.zombie .body-group{animation:walkBounce 1.2s ease-in-out infinite}
+.zombie .arm-l{animation:walkArms 1s ease-in-out infinite}
+.zombie .arm-r{animation:walkArms 1s ease-in-out infinite .5s}
+.zombie .leg-l{animation:walkLegL .8s ease-in-out infinite}
+.zombie .leg-r{animation:walkLegR .8s ease-in-out infinite .4s}
+.zombie-fast .body-group{animation-duration:.4s}
+.zombie-fast .arm-l,.zombie-fast .arm-r{animation-duration:.3s}
+.zombie-fast .leg-l,.zombie-fast .leg-r{animation-duration:.25s}
+.zombie-tank svg{transform:scale(1.3)}
+.zombie{transition:left .8s linear,top .8s linear}
+
+/* Effects */
+.muzzle-overlay{position:fixed;inset:0;background:rgba(255,200,50,.05);pointer-events:none;animation:muzzleFlash .1s forwards;z-index:999}
+@keyframes muzzleFlash{0%{opacity:1}100%{opacity:0}}
+.damage-overlay{position:fixed;inset:0;background:rgba(255,0,0,.15);pointer-events:none;animation:dmgFlash .3s forwards;z-index:999}
+@keyframes dmgFlash{0%{opacity:1}100%{opacity:0}}
+.wave-announce{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font-family:'Press Start 2P',monospace;font-size:28px;color:#ff5252;text-shadow:0 0 30px #ff5252;z-index:200;pointer-events:none;animation:waveAnnounce 2.5s forwards;white-space:nowrap}
+@keyframes waveAnnounce{0%{opacity:0;transform:translate(-50%,-50%) scale(.5)}20%{opacity:1;transform:translate(-50%,-50%) scale(1.1)}80%{opacity:1}100%{opacity:0;transform:translate(-50%,-50%) scale(1)}}
+.shake{animation:screenShake .3s}
+@keyframes screenShake{0%,100%{transform:translate(0)}25%{transform:translate(-4px,2px)}50%{transform:translate(3px,-3px)}75%{transform:translate(-2px,1px)}}
+
+/* Wave creep — zombies appearing at edges before wave */
+.wave-creep{position:absolute;z-index:10;opacity:0;transition:opacity 3s;pointer-events:none}
+.wave-creep.active{opacity:.6}
+
+.wave-countdown{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);font-family:'Press Start 2P',monospace;font-size:14px;color:#ff5252;text-shadow:0 0 20px #ff5252;z-index:200;pointer-events:none;opacity:0;transition:opacity .5s}
+.wave-countdown.active{opacity:1}
+.wave-countdown .cd-num{font-size:28px;color:#ff1744;animation:cdPulse 1s infinite}
+@keyframes cdPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.1)}}
+
+.death-screen{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;flex-direction:column;align-items:center;justify-content:center;z-index:1000}
+.death-screen.active{display:flex}
+.death-title{font-family:'Press Start 2P',monospace;font-size:36px;color:#ff5252;margin-bottom:16px;text-shadow:0 0 20px #ff5252}
+.death-stats{font-size:14px;color:#666;margin-bottom:24px;text-align:center;line-height:2}
+.death-btn{font-family:'Press Start 2P',monospace;font-size:12px;padding:12px 24px;background:#ff5252;color:#fff;border:none;cursor:pointer;border-radius:4px}
+.death-btn:hover{background:#ff8a80}
+
+.panel-right{width:280px;background:rgba(12,14,20,.98);border-left:1px solid #1a1d27;display:flex;flex-direction:column;overflow:hidden}
+.panel-tabs{display:flex;border-bottom:1px solid #1a1d27}
+.panel-tab{flex:1;padding:8px;text-align:center;font-size:11px;cursor:pointer;background:#0c0e14;border-bottom:2px solid transparent;transition:all .2s}
+.panel-tab.active{border-bottom-color:#ff5252;color:#ff5252;background:#140a0a}
+.panel-tab:hover{background:#14161e}
+.panel-content{flex:1;overflow-y:auto;padding:8px}
+.shop-grid{display:flex;flex-direction:column;gap:4px}
+.shop-card{background:#0c0e14;border:1px solid #1a1d27;border-radius:6px;padding:8px;cursor:pointer;transition:all .2s}
+.shop-card:hover{border-color:#333;background:#14161e}
+.shop-card-header{display:flex;align-items:center;justify-content:space-between}
+.shop-card-name{font-size:12px;font-weight:600}
+.shop-card-price{color:#ffab40;font-size:11px;font-weight:700}
+.shop-card-desc{font-size:9px;color:#555;margin-top:2px}
+.shop-card.cannot-afford{opacity:.35}
+.story-log{display:flex;flex-direction:column;gap:3px}
+.story-entry{font-size:10px;padding:4px 6px;border-radius:3px;background:#0c0e14;border-left:2px solid #333}
+.story-entry.combat{border-color:#ff5252;color:#ff8a80}
+.story-entry.trade{border-color:#00e676;color:#69f0ae}
+.story-entry.danger{border-color:#d50000;color:#ff5252;background:#1a0808}
+.story-entry.success{border-color:#00e676;color:#00e676}
+.story-entry.shop{border-color:#ffab40;color:#ffab40}
+.story-entry.system{border-color:#448aff;color:#82b1ff}
+.story-time{color:#333;font-size:8px}
+.inv-section{margin-bottom:12px}
+.inv-title{font-size:11px;color:#666;font-weight:600;margin-bottom:4px;font-family:'Space Mono',monospace}
+.inv-grid{display:flex;flex-wrap:wrap;gap:4px}
+.inv-item{background:#14161e;border:1px solid #1a1d27;border-radius:4px;padding:4px 8px;font-size:10px;display:flex;align-items:center;gap:4px}
+.inv-count{color:#ffab40;font-weight:700}
+.portfolio-item{background:#0c0e14;border:1px solid #1a1d27;border-radius:4px;padding:6px 8px;margin-bottom:4px}
+.portfolio-header{display:flex;justify-content:space-between;font-size:11px}
+.portfolio-detail{font-size:9px;color:#555;margin-top:2px}
+.portfolio-pnl-pos{color:#00e676}.portfolio-pnl-neg{color:#ff5252}
+
+@media(max-width:768px){
+  .panel-right{display:none}
+  .hud{font-size:10px;padding:4px 8px;gap:8px}
+  .hp-bar{width:50px}
+  .building{width:95%;height:60%}
+  .char-wrap svg{width:24px;height:32px}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="hud">
+    <div class="hud-left">
+      <div class="stat"><span class="day-badge" id="dayBadge">DAY 1</span></div>
+      <div class="stat"><span class="wave-badge" id="waveBadge">WAVE 1</span></div>
+      <div class="stat"><span class="stat-icon">❤️</span><div class="hp-bar"><div class="hp-fill green" id="hpFill"></div></div><span class="stat-val" id="hpVal">100</span></div>
+      <div class="stat"><span class="stat-icon">🍖</span><div class="hp-bar"><div class="hp-fill hunger-fill" id="hungerFill"></div></div><span class="stat-val" id="hungerVal">100</span></div>
+      <div class="stat"><span class="stat-icon">💧</span><div class="hp-bar"><div class="hp-fill thirst-fill" id="thirstFill"></div></div><span class="stat-val" id="thirstVal">100</span></div>
+      <div class="stat"><span class="stat-icon">🧱</span><div class="hp-bar"><div class="hp-fill wall-fill" id="wallFill"></div></div><span class="stat-val" id="wallVal">100</span></div>
+    </div>
+    <div class="hud-right">
+      <div class="stat"><span class="stat-icon">💰</span><span class="stat-val" id="cashVal">$100</span></div>
+      <div class="stat"><span class="stat-icon">🔫</span><span class="stat-val" id="weaponVal">Pistol</span></div>
+      <div class="stat"><span class="stat-icon">🔸</span><span class="stat-val" id="ammoVal">30</span></div>
+      <div class="stat"><span id="pnlVal" class="stat-val pnl-pos">+$0</span></div>
+      <div class="stat"><span class="stat-icon">💀</span><span class="stat-val" id="killsVal">0</span></div>
+    </div>
+  </div>
+  <div class="goal-bar">
+    <span class="goal-label">🎯 Survive 100 waves to launch coin</span>
+    <div class="goal-track"><div class="goal-fill" id="goalFill" style="width:1%"></div></div>
+    <span class="goal-text" id="goalText">Wave 1/100</span>
+  </div>
+
+  <div class="scene-wrap">
+    <div class="scene" id="scene">
+      <div class="urgency-vignette" id="urgencyVignette"></div>
+      <div class="building" id="building">
+        <div class="building-label">AGENT-01 SAFEHOUSE</div>
+
+        <!-- TRADING FLOOR -->
+        <div class="room" style="left:1%;top:1%;width:38%;height:55%">
+          <div class="room-label">TRADING FLOOR</div>
+          <div class="desk" style="left:25%;top:40%;width:65px;height:28px"></div>
+          <div class="monitor" style="left:15%;top:3%;width:65px;height:42px"><div class="monitor-scanline"></div><div class="monitor-flash" id="monFlashL"></div><div class="monitor-content" id="monLeft"><div class="monitor-title" style="color:#00e676">PUMP.FUN</div></div></div>
+          <div class="monitor" style="left:50%;top:3%;width:65px;height:42px"><div class="monitor-scanline"></div><div class="monitor-flash" id="monFlashR"></div><div class="monitor-content" id="monRight"><div class="monitor-title" style="color:#448aff">PORTFOLIO</div></div></div>
+          <div class="cpu" style="left:80%;top:30%"><div class="cpu-fan"></div><div class="cpu-light"></div></div>
+        </div>
+
+        <!-- BEDROOM -->
+        <div class="room" style="left:1%;top:58%;width:38%;height:40%">
+          <div class="room-label">BEDROOM</div>
+          <div class="bed" style="left:10%;top:25%;width:44px;height:26px"></div>
+          <div class="shelf" style="left:10%;top:65%;width:30px;height:12px;border-color:#d50000"></div>
+        </div>
+
+        <!-- HALLWAY -->
+        <div class="room" style="left:40%;top:1%;width:6%;height:98%;background:#080a10">
+          <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:6px;color:#222;writing-mode:vertical-rl">HALL</div>
+        </div>
+
+        <!-- ARMORY -->
+        <div class="room" style="left:47%;top:1%;width:25%;height:45%">
+          <div class="room-label">ARMORY</div>
+          <div class="shelf" style="left:8%;top:20%;width:32px;height:12px;border-color:#d50000"></div>
+          <div class="shelf" style="left:8%;top:50%;width:32px;height:12px"></div>
+          <div class="gun-rack" style="right:8%;top:20%;width:38px;height:12px"><svg viewBox="0 0 20 6" fill="none" width="32" height="10"><rect x="1" y="2" width="14" height="2" rx="1" fill="#757575"/><rect x="14" y="1" width="4" height="4" rx="1" fill="#616161"/></svg></div>
+          <div class="gun-rack" style="right:8%;top:50%;width:42px;height:12px"><svg viewBox="0 0 24 6" fill="none" width="36" height="10"><rect x="1" y="2" width="18" height="2" rx="1" fill="#8d6e63"/><rect x="18" y="1" width="4" height="4" rx="1" fill="#5d4037"/></svg></div>
+        </div>
+
+        <!-- SUPPLY SHOP -->
+        <div class="room" style="left:47%;top:48%;width:52%;height:50%">
+          <div class="room-label">SUPPLY SHOP</div>
+          <div class="dispenser food-disp" style="left:4%;top:10%;width:28px;height:36px"><svg viewBox="0 0 16 12" width="16" height="12" fill="none"><rect x="2" y="0" width="12" height="8" rx="2" fill="#cc660033" stroke="#cc6600" stroke-width="0.8"/><circle cx="8" cy="4" r="2" fill="#cc6600" opacity="0.5"/></svg><div class="dispenser-label" style="color:#cc6600">FOOD</div></div>
+          <div class="dispenser water-disp" style="left:4%;top:50%;width:28px;height:36px"><svg viewBox="0 0 16 12" width="16" height="12" fill="none"><rect x="2" y="0" width="12" height="8" rx="2" fill="#2962ff33" stroke="#2962ff" stroke-width="0.8"/><circle cx="8" cy="4" r="2" fill="#2962ff" opacity="0.5"/></svg><div class="dispenser-label" style="color:#2962ff">WATER</div></div>
+          <div class="elec-box" style="left:4%;top:82%"><div class="elec-bolt">⚡</div></div>
+          <div class="shelf" style="left:35%;top:15%;width:30px;height:12px;border-color:#d50000"></div>
+          <div class="shelf" style="left:35%;top:45%;width:30px;height:12px"></div>
+          <div style="position:absolute;right:8%;top:15%;width:24px;height:18px;background:#1a1410;border:1px solid #ffab40;border-radius:2px"></div>
+          <div style="position:absolute;right:8%;top:42%;width:24px;height:18px;background:#1a1410;border:1px solid #ffab40;border-radius:2px"></div>
+        </div>
+
+        <!-- DEFENSIVE WALL -->
+        <div style="position:absolute;right:0;top:1%;width:3px;height:98%;background:#333;border-left:1px solid #555"></div>
+
+        <!-- AGENT -->
+        <div class="char-wrap no-trans state-idle" id="agentChar" style="left:20%;top:30%">
+          <div class="char-hp"><div class="char-hp-fill" id="agentHpFill" style="width:100%;background:#00e676"></div></div>
+          <svg width="36" height="48" viewBox="0 0 40 52" fill="none">
+            <g class="body-group">
+              <circle cx="20" cy="26" r="12" fill="#00e676" opacity="0.08"/>
+              <rect x="8" y="16" width="24" height="20" rx="4" fill="#1a1d27" stroke="#00e676" stroke-width="1.5"/>
+              <circle cx="20" cy="26" r="3" fill="#00e676" opacity="0.8"><animate attributeName="opacity" values="0.4;1;0.4" dur="2s" repeatCount="indefinite"/></circle>
+              <g class="head-group">
+                <rect x="10" y="4" width="20" height="14" rx="3" fill="#1a1d27" stroke="#00e676" stroke-width="1.5"/>
+                <circle class="eye-l" cx="15" cy="10" r="2" fill="#00e676"><animate attributeName="r" values="2;0.5;2" dur="4s" repeatCount="indefinite"/></circle>
+                <circle class="eye-r" cx="25" cy="10" r="2" fill="#00e676"><animate attributeName="r" values="2;0.5;2" dur="4s" repeatCount="indefinite"/></circle>
+                <line x1="20" y1="4" x2="20" y2="0" stroke="#00e676" stroke-width="1"/>
+                <circle cx="20" cy="0" r="1.5" fill="#00e676"><animate attributeName="opacity" values="1;0.3;1" dur="1.5s" repeatCount="indefinite"/></circle>
+              </g>
+              <g class="arm-l"><rect x="2" y="20" width="6" height="12" rx="2" fill="#1a1d27" stroke="#00e676" stroke-width="1"/></g>
+              <g class="arm-r"><rect x="32" y="20" width="6" height="12" rx="2" fill="#1a1d27" stroke="#00e676" stroke-width="1"/><rect x="36" y="28" width="4" height="2" rx="1" fill="#757575" stroke="#9e9e9e" stroke-width="0.5"/><rect x="39" y="27" width="3" height="4" rx="1" fill="#616161" stroke="#757575" stroke-width="0.5"/></g>
+              <g class="leg-l"><rect x="12" y="36" width="6" height="10" rx="2" fill="#1a1d27" stroke="#00e676" stroke-width="1"/><rect x="10" y="44" width="10" height="4" rx="2" fill="#00e676" opacity="0.6"/></g>
+              <g class="leg-r"><rect x="22" y="36" width="6" height="10" rx="2" fill="#1a1d27" stroke="#00e676" stroke-width="1"/><rect x="20" y="44" width="10" height="4" rx="2" fill="#00e676" opacity="0.6"/></g>
+            </g>
+          </svg>
+          <div class="walk-shadow"></div>
+        </div>
+
+        <div id="zombieLayer"></div>
+      </div>
+      <!-- Dust particles -->
+      <div id="dustLayer" style="position:absolute;inset:0;pointer-events:none;z-index:30"></div>
+    </div>
+
+    <div class="panel-right">
+      <div class="panel-tabs">
+        <div class="panel-tab active" data-tab="shop" onclick="switchTab('shop')">🔫 SHOP</div>
+        <div class="panel-tab" data-tab="story" onclick="switchTab('story')">📜 LOG</div>
+        <div class="panel-tab" data-tab="inventory" onclick="switchTab('inventory')">🎒 INV</div>
+      </div>
+      <div class="panel-content" id="panelContent"></div>
+    </div>
+  </div>
+</div>
+
+<div class="death-screen" id="deathScreen"><div class="death-title">💀 YOU DIED</div><div class="death-stats" id="deathStats"></div><button class="death-btn" onclick="location.reload()">RESPAWN</button></div>
+<div class="wave-countdown" id="waveCountdown"></div>
+
+<script>
+const DATA_URL='/zombiesurvival_state.json';
+let prevState=null,lastWave=0,activeTab='shop',audioCtx=null;
+
+/* ═══ AUDIO ═══ */
+function getAudio(){if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();return audioCtx}
+function playTone(type,freq,dur,vol){try{const c=getAudio(),o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.type=type;o.frequency.value=freq;g.gain.setValueAtTime(vol,c.currentTime);g.gain.exponentialRampToValueAtTime(.01,c.currentTime+dur);o.start();o.stop(c.currentTime+dur)}catch(e){}}
+function playShoot(){playTone('sawtooth',150,.1,.3)}
+function playZombieHit(){playTone('square',80,.15,.15)}
+function playDamage(){playTone('sawtooth',200,.2,.2)}
+function playCoin(){playTone('sine',880,.08,.15);setTimeout(()=>playTone('sine',1100,.08,.15),80)}
+function playBigWin(){playTone('sine',660,.15,.2);setTimeout(()=>playTone('sine',880,.15,.2),150);setTimeout(()=>playTone('sine',1100,.2,.2),300)}
+function playDread(){playTone('sine',60,2,.06)}
+function playGroan(){playTone('sawtooth',40,.8,.05);setTimeout(()=>playTone('sawtooth',35,.6,.04),400)}
+function playWaveAnnounce(){try{const c=getAudio();[100,150,100].forEach((f,i)=>{const o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.type='square';o.frequency.value=f;g.gain.setValueAtTime(.15,c.currentTime+i*.2);g.gain.exponentialRampToValueAtTime(.01,c.currentTime+i*.2+.15);o.start(c.currentTime+i*.2);o.stop(c.currentTime+i*.2+.15)})}catch(e){}}
+
+/* ═══ ZOMBIE SVG ═══ */
+function zombieSVG(type){
+  const c={normal:{s:'#2e7d32',e:'#ff1744',g:'#00e676'},fast:{s:'#f9a825',e:'#ff6d00',g:'#ffab00'},tank:{s:'#c62828',e:'#ff1744',g:'#ff5252'}}[type]||{s:'#2e7d32',e:'#ff1744',g:'#00e676'};
+  return `<svg width="36" height="48" viewBox="0 0 40 52" fill="none"><g class="body-group"><circle cx="20" cy="26" r="12" fill="${c.g}" opacity="0.08"/><rect x="8" y="16" width="24" height="20" rx="4" fill="#1a1d27" stroke="${c.s}" stroke-width="1.5"/><circle cx="20" cy="26" r="3" fill="${c.e}" opacity="0.6"><animate attributeName="opacity" values="0.3;0.8;0.3" dur="1.5s" repeatCount="indefinite"/></circle><g class="head-group"><rect x="10" y="4" width="20" height="14" rx="3" fill="#1a1d27" stroke="${c.s}" stroke-width="1.5"/><circle class="eye-l" cx="14" cy="10" r="3" fill="${c.e}" opacity="0.9"/><circle cx="14" cy="10" r="1.5" fill="#000"/><circle class="eye-r" cx="26" cy="10" r="3" fill="${c.e}" opacity="0.9"/><circle cx="26" cy="10" r="1.5" fill="#000"/><line x1="14" y1="15" x2="17" y2="14" stroke="${c.s}" stroke-width="0.8"/><line x1="18" y1="15.5" x2="22" y2="14.5" stroke="${c.s}" stroke-width="0.8"/><line x1="23" y1="14.5" x2="26" y2="15" stroke="${c.s}" stroke-width="0.8"/></g><rect x="12" y="22" width="16" height="10" rx="2" fill="${c.e}" opacity="0.08" stroke="${c.e}" stroke-width="0.3"/><g class="arm-l"><rect x="1" y="18" width="7" height="14" rx="2" fill="#1a1d27" stroke="${c.s}" stroke-width="1"/><circle cx="4" cy="33" r="2" fill="${c.e}" opacity="0.2"/></g><g class="arm-r"><rect x="32" y="18" width="7" height="14" rx="2" fill="#1a1d27" stroke="${c.s}" stroke-width="1"/><circle cx="36" cy="33" r="2" fill="${c.e}" opacity="0.2"/></g><g class="leg-l"><rect x="12" y="36" width="6" height="10" rx="2" fill="#1a1d27" stroke="${c.s}" stroke-width="1"/><rect x="10" y="44" width="10" height="4" rx="2" fill="${c.s}" opacity="0.6"/></g><g class="leg-r"><rect x="22" y="36" width="6" height="10" rx="2" fill="#1a1d27" stroke="${c.s}" stroke-width="1"/><rect x="20" y="44" width="10" height="4" rx="2" fill="${c.s}" opacity="0.6"/></g></g></svg>`;
+}
+
+/* ═══ AGENT + FREE WILL ═══ */
+const STATES=['state-idle','state-walking','state-shooting','state-hurt','state-typing','state-celebrate','state-nervous','state-pacing'];
+const agentSpots=[
+  {name:'desk',x:22,y:25,action:'typing'},
+  {name:'bed',x:14,y:72,action:'idle'},
+  {name:'armory',x:52,y:22,action:'idle'},
+  {name:'door',x:38,y:50,action:'idle'},
+  {name:'shop',x:55,y:60,action:'idle'},
+  {name:'center',x:25,y:45,action:'idle'},
+  {name:'wall',x:70,y:50,action:'idle'},
+];
+let agentPos={x:20,y:30},agentMoving=false;
+
+function setAgentState(s){const el=document.getElementById('agentChar');STATES.forEach(c=>el.classList.remove(c));el.classList.add('state-'+s)}
+function moveAgentTo(x,y,action){if(agentMoving)return;agentMoving=true;setAgentState('walking');const el=document.getElementById('agentChar');el.style.left=x+'%';el.style.top=y+'%';agentPos={x,y};setTimeout(()=>{agentMoving=false;setAgentState(action==='typing'?'typing':'idle')},1000+Math.random()*300)}
+
+function agentFreeWill(){
+  if(!prevState||!prevState.is_alive)return;
+  // Reactive micro-behaviors based on state
+  const s=prevState;
+  if(s.health<30){setAgentState('nervous');setTimeout(()=>setAgentState('idle'),2000);return}
+  if(s.hunger<15||s.thirst<15){setAgentState('nervous');setTimeout(()=>setAgentState('idle'),1500);return}
+  // Pick random spot
+  let spot;do{spot=agentSpots[Math.floor(Math.random()*agentSpots.length)]}while(spot.x===agentPos.x&&agentSpots.length>1);
+  moveAgentTo(spot.x,spot.y,spot.action);
+}
+
+let freeWillTimer=null;
+function startFreeWill(){
+  setTimeout(agentFreeWill,2000);
+  freeWillTimer=setInterval(()=>{
+    if(prevState&&prevState.zombies_alive>0)return;
+    agentFreeWill();
+  },4000+Math.random()*4000);
+}
+
+/* ═══ DUST PARTICLES ═══ */
+function spawnDust(){
+  const layer=document.getElementById('dustLayer');
+  if(!layer)return;
+  setInterval(()=>{
+    if(layer.children.length>15)return;
+    const d=document.createElement('div');
+    d.className='dust';
+    d.style.left=Math.random()*100+'%';
+    d.style.top=60+Math.random()*35+'%';
+    d.style.animationDuration=(3+Math.random()*4)+'s';
+    layer.appendChild(d);
+    setTimeout(()=>d.remove(),7000);
+  },800);
+}
+
+/* ═══ REACTIVE THOUGHTS ═══ */
+function getThought(s){
+  if(!s)return"Monitoring situation...";
+  const hp=s.health, hunger=s.hunger, thirst=s.thirst, cash=s.cash, wall=s.wall_hp;
+  const pnl=s.pnl||0, zombies=s.zombies_alive, wave=s.wave;
+  const portfolio=s.portfolio||[];
+
+  // Critical survival
+  if(hp<20)return"CRITICAL HP! Need medkit NOW!";
+  if(hunger<10)return"Starving... need food immediately";
+  if(thirst<10)return"Dehydrated... water please";
+  if(cash<10&&portfolio.length===0&&zombies>0)return"No cash, no ammo, no hope...";
+  if(wall<20)return"Wall is crumbling! Reinforce it!";
+
+  // Combat
+  if(zombies>3)return wave+" zombies?! This is getting insane";
+  if(zombies>0)return"Focus! Shoot the zombies!";
+  if(zombies===0&&s.cycle%3===0)return"Wave cleared. Time to restock.";
+
+  // Trading
+  if(portfolio.length>0){
+    const p=portfolio[0];
+    const cur=p.current_price||p.buy_price;
+    const pp=((cur-p.buy_price)/p.buy_price*100);
+    if(pp>15)return p.symbol+" is pumping! Should I take profit?";
+    if(pp>5)return p.symbol+" looking good at +"+pp.toFixed(0)+"%";
+    if(pp<-10)return p.symbol+" dropping... cut losses?";
+    if(pp<-5)return"Holding "+p.symbol+" at "+pp.toFixed(0)+"%, hoping for bounce";
+  }
+
+  // Cash
+  if(cash>200&&portfolio.length<2)return"Cash is good, should diversify portfolio";
+  if(cash>100&&portfolio.length===0)return"Should buy a token, cash sitting idle";
+  if(cash<30)return"Running low on cash... need a winning trade";
+
+  // General
+  if(wave>=10)return"Day "+s.day+", Wave "+wave+". Still alive somehow.";
+  if(s.wins>s.losses)return"On a winning streak! "+s.wins+"W/"+s.losses+"L";
+  if(s.losses>s.wins)return"Down "+s.losses+"L/"+s.wins+"W... need to be smarter";
+  return"Wave "+wave+" approaching. Stay sharp.";
+}
+
+/* ═══ LIVE MONITORS ═══ */
+let lastTradeCount=0;
+function updateMonitors(){
+  if(!prevState)return;const s=prevState;
+  const mL=document.getElementById('monLeft');
+  const mR=document.getElementById('monRight');
+  if(!mL||!mR)return;
+
+  // Trade flash
+  if(s.trades>lastTradeCount){
+    const flashL=document.getElementById('monFlashL');
+    const flashR=document.getElementById('monFlashR');
+    const lastEvent=(s.events||[]).slice(-1)[0];
+    if(lastEvent&&lastEvent.type==='trade'){
+      flashL.className='monitor-flash buy';flashR.className='monitor-flash buy';
+      setTimeout(()=>{flashL.className='monitor-flash';flashR.className='monitor-flash'},1000);
+    }
+    lastTradeCount=s.trades;
+  }
+
+  // Left monitor — feed + thought
+  const events=(s.events||[]).slice(-5);
+  const thought=getThought(s);
+  let lh='<div class="monitor-title" style="color:#00e676">PUMP.FUN</div>';
+  lh+='<div style="color:#555">W'+s.wave+' D'+s.day+' $'+s.cash.toFixed(0)+'</div>';
+  events.forEach(e=>{
+    const col=e.type==='trade'?'#00e676':e.type==='combat'?'#ff5252':e.type==='danger'?'#ff1744':e.type==='success'?'#00e676':'#666';
+    lh+='<div style="color:'+col+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+e.text.substring(0,22)+'</div>';
+  });
+  lh+='<div style="color:#ffab40;margin-top:2px;font-style:italic;border-top:1px solid #1a1d27;padding-top:2px">"'+thought+'"</div>';
+  mL.innerHTML=lh;
+
+  // Right monitor — portfolio + stats
+  let rh='<div class="monitor-title" style="color:#448aff">PORTFOLIO</div>';
+  rh+='<div style="color:#555">Trades:'+s.trades+' W:'+s.wins+' L:'+s.losses+'</div>';
+  const pnl=s.pnl||0;
+  rh+='<div style="color:'+(pnl>=0?'#00e676':'#ff5252')+';font-weight:700">PnL: '+(pnl>=0?'+':'')+ '$'+pnl.toFixed(0)+'</div>';
+  if(s.portfolio&&s.portfolio.length){
+    s.portfolio.forEach(p=>{
+      const cur=p.current_price||p.buy_price;
+      const pp=((cur-p.buy_price)/p.buy_price*100);
+      const col=pp>=0?'#00e676':'#ff5252';
+      rh+='<div style="color:'+col+'">'+p.symbol+' '+(pp>=0?'+':'')+pp.toFixed(1)+'%</div>';
+      rh+='<div style="color:#444;font-size:5px">MCap $'+fmtMcap(p.buy_mcap)+'</div>';
+    });
+  }else rh+='<div style="color:#333">No positions</div>';
+  rh+='<div style="color:#555;border-top:1px solid #1a1d27;padding-top:1px">Wall:'+s.wall_hp+'/'+s.wall_max_hp+'</div>';
+  rh+='<div style="color:#555">'+(s.equipped_weapon||'fists')+' | '+Object.values(s.ammo||{}).reduce((a,b)=>a+b,0)+' ammo</div>';
+  mR.innerHTML=rh;
+}
+
+function fmtMcap(v){if(!v)return'?';if(v>=1e9)return(v/1e9).toFixed(1)+'B';if(v>=1e6)return(v/1e6).toFixed(1)+'M';if(v>=1e3)return(v/1e3).toFixed(0)+'K';return v.toFixed(0)}
+
+/* ═══ WAVE COUNTDOWN + DREAD ═══ */
+let waveCDInterval=null;
+function startWaveCountdown(secs){
+  const el=document.getElementById('waveCountdown');
+  const vig=document.getElementById('urgencyVignette');
+  let remaining=secs;
+  el.classList.add('active');vig.classList.add('active');
+  playDread();playGroan();
+  el.innerHTML='<span style="color:#ff5252">NEXT WAVE IN</span> <span class="cd-num">'+remaining+'</span>';
+  waveCDInterval=setInterval(()=>{
+    remaining--;
+    if(remaining<=0){clearInterval(waveCDInterval);el.classList.remove('active');vig.classList.remove('active');return}
+    el.innerHTML='<span style="color:#ff5252">NEXT WAVE IN</span> <span class="cd-num">'+remaining+'</span>';
+    if(remaining<=3)playTone('square',200,.1,.1);
+    if(remaining===5)playGroan();
+  },1000);
+}
+
+/* ═══ TABS ═══ */
+function switchTab(t){activeTab=t;document.querySelectorAll('.panel-tab').forEach(e=>e.classList.toggle('active',e.dataset.tab===t));renderPanel()}
+function renderPanel(){const el=document.getElementById('panelContent');if(activeTab==='shop')renderShop(el);else if(activeTab==='story')renderStory(el);else renderInventory(el)}
+function renderShop(el){
+  if(!prevState){el.innerHTML='';return}
+  const s=prevState;
+  const items=[{id:'pistol',icon:'🔫',name:'Pistol',price:50,dmg:15},{id:'shotgun',icon:'💥',name:'Shotgun',price:120,dmg:40},{id:'rifle',icon:'🎯',name:'Rifle',price:200,dmg:25},{id:'smg',icon:'⚡',name:'SMG',price:150,dmg:10},{id:'sniper',icon:'💀',name:'Sniper',price:350,dmg:80},{id:'9mm',icon:'🔸',name:'9mm (30)',price:10},{id:'shells',icon:'🔸',name:'Shells (12)',price:15},{id:'5.56',icon:'🔸',name:'5.56 (30)',price:20},{id:'7.62',icon:'💀',name:'7.62 (10)',price:25},{id:'bandage',icon:'🩹',name:'Bandage',price:5,desc:'+15 HP'},{id:'medkit',icon:'🏥',name:'Med Kit',price:25,desc:'+50 HP'},{id:'food',icon:'🍖',name:'MRE',price:8},{id:'water',icon:'💧',name:'Water',price:5},{id:'turret',icon:'🛡️',name:'Turret',price:300},{id:'wall_upgrade',icon:'🧱',name:'Wall +50HP',price:150},{id:'electricity',icon:'⚡',name:'Electricity',price:30}];
+  // What agent owns
+  const owned=s.inventory||{};
+  const ammo=s.ammo||{};
+  const equipped=s.equipped_weapon;
+  el.innerHTML='<div class="shop-grid">'+items.map(it=>{
+    const afford=s.cash>=it.price;
+    const isOwned=owned[it.id]>0||ammo[it.id]>0||equipped===it.id;
+    return `<div class="shop-card ${afford?'':'cannot-afford'}" style="${isOwned?'border-color:#00e67633':''}"><div class="shop-card-header"><span class="shop-card-name">${it.icon} ${it.name}${isOwned?' ✅':''}</span><span class="shop-card-price">$${it.price}</span></div>${it.desc?`<div class="shop-card-desc">${it.desc}</div>`:''}${it.dmg?`<div style="font-size:9px;color:#666;margin-top:2px">DMG:${it.dmg}</div>`:''}</div>`;
+  }).join('')+'</div>';
+}
+function renderStory(el){const events=prevState?prevState.events||[]:[];el.innerHTML='<div class="story-log">'+events.slice(-30).reverse().map(e=>`<div class="story-entry ${e.type||''}"><span class="story-time">[${e.time}]</span> ${e.text}</div>`).join('')+'</div>'}
+function renderInventory(el){
+  if(!prevState){el.innerHTML='';return}
+  const s=prevState;
+  const inv=s.inventory||{},ammo=s.ammo||{},port=s.portfolio||[];
+  let h='';
+  // Equipment
+  h+='<div class="inv-section"><div class="inv-title">🔫 EQUIPPED</div><div class="inv-grid"><div class="inv-item" style="border-color:#00e67633">'+(s.equipped_weapon||'Fists')+'</div></div></div>';
+  // Inventory
+  if(Object.keys(inv).length){
+    h+='<div class="inv-section"><div class="inv-title">📦 INVENTORY</div><div class="inv-grid">';
+    for(const[k,v]of Object.entries(inv))h+=`<div class="inv-item">📦 ${k} <span class="inv-count">×${v}</span></div>`;
+    h+='</div></div>';
+  }
+  // Ammo
+  if(Object.keys(ammo).length){
+    h+='<div class="inv-section"><div class="inv-title">🔸 AMMO</div><div class="inv-grid">';
+    for(const[k,v]of Object.entries(ammo))h+=`<div class="inv-item">🔸 ${k} <span class="inv-count">×${v}</span></div>`;
+    h+='</div></div>';
+  }
+  // Portfolio
+  h+='<div class="inv-section"><div class="inv-title">📈 PORTFOLIO</div>';
+  if(port.length){
+    port.forEach(p=>{
+      const cur=p.current_price||p.buy_price;
+      const pnl=((cur-p.buy_price)/p.buy_price*100);
+      const col=pnl>=0?'portfolio-pnl-pos':'portfolio-pnl-neg';
+      h+=`<div class="portfolio-item"><div class="portfolio-header"><span style="font-weight:700">${p.symbol}</span><span class="${col}">${pnl>=0?'+':''}${pnl.toFixed(1)}%</span></div><div class="portfolio-detail">MCap ${fmtMcap(p.buy_mcap)} | ${p.amount.toFixed(0)} tokens</div></div>`;
+    });
+  }else h+='<div style="color:#333;font-size:10px;padding:8px">No positions yet</div>';
+  h+='</div>';
+  el.innerHTML=h;
+}
+
+/* ═══ HUD ═══ */
+function updateHUD(){
+  if(!prevState)return;const s=prevState;
+  document.getElementById('dayBadge').textContent='DAY '+s.day;
+  document.getElementById('waveBadge').textContent='WAVE '+s.wave;
+  document.getElementById('hpVal').textContent=s.health;
+  document.getElementById('hungerVal').textContent=s.hunger;
+  document.getElementById('thirstVal').textContent=s.thirst;
+  document.getElementById('wallVal').textContent=s.wall_hp;
+  document.getElementById('cashVal').textContent='$'+s.cash.toFixed(0);
+  document.getElementById('weaponVal').textContent=s.equipped_weapon||'fists';
+  document.getElementById('ammoVal').textContent=Object.values(s.ammo||{}).reduce((a,b)=>a+b,0);
+  document.getElementById('killsVal').textContent=s.total_zombies_killed;
+  const hp=(s.health/s.max_health*100);
+  document.getElementById('hpFill').style.width=hp+'%';
+  document.getElementById('hpFill').className='hp-fill '+(hp>60?'green':hp>30?'yellow':'red');
+  document.getElementById('hungerFill').style.width=s.hunger+'%';
+  document.getElementById('thirstFill').style.width=s.thirst+'%';
+  document.getElementById('wallFill').style.width=(s.wall_hp/s.wall_max_hp*100)+'%';
+  document.getElementById('agentHpFill').style.width=hp+'%';
+  document.getElementById('agentHpFill').style.background=hp>60?'#00e676':hp>30?'#ffab40':'#ff5252';
+  const pnl=s.pnl||0;const p=document.getElementById('pnlVal');
+  p.textContent=(pnl>=0?'+':'')+'$'+pnl.toFixed(0);p.className='stat-val '+(pnl>=0?'pnl-pos':'pnl-neg');
+  const goal=Math.min(100,s.wave);
+  document.getElementById('goalFill').style.width=goal+'%';
+  document.getElementById('goalText').textContent='Wave '+s.wave+'/100';
+  // Urgency vignette intensity
+  const vig=document.getElementById('urgencyVignette');
+  if(!vig.classList.contains('active')&&s.health<40)vig.classList.add('active');
+  if(s.health>60&&!document.getElementById('waveCountdown').classList.contains('active'))vig.classList.remove('active');
+}
+
+/* ═══ ZOMBIES ═══ */
+function renderZombies(){
+  if(!prevState)return;const layer=document.getElementById('zombieLayer');layer.innerHTML='';
+  (prevState.zombies||[]).forEach(z=>{
+    const el=document.createElement('div');el.className=`zombie zombie-${z.type}`;
+    el.style.left=z.x+'%';el.style.top=z.y+'%';
+    el.innerHTML=`<div class="char-hp"><div class="char-hp-fill" style="width:${(z.hp/z.max_hp*100)}%;background:#ff5252"></div></div>${zombieSVG(z.type)}`;
+    layer.appendChild(el);
+  });
+}
+
+/* ═══ EFFECTS ═══ */
+function showWaveAnnounce(w){const el=document.createElement('div');el.className='wave-announce';el.textContent=`🧟 WAVE ${w} 🧟`;document.body.appendChild(el);playWaveAnnounce();setTimeout(()=>el.remove(),2500)}
+function showMuzzleFlash(){const el=document.createElement('div');el.className='muzzle-overlay';document.body.appendChild(el);setTimeout(()=>el.remove(),150)}
+function showDamageFlash(){const el=document.createElement('div');el.className='damage-overlay';document.body.appendChild(el);playDamage();setTimeout(()=>el.remove(),350)}
+function shakeScreen(){const s=document.querySelector('.scene-wrap');s.classList.add('shake');setTimeout(()=>s.classList.remove('shake'),350)}
+function showDeathScreen(){const s=prevState;document.getElementById('deathStats').innerHTML=`Survived to Day ${s.day}, Wave ${s.wave}<br>Zombie Kills: ${s.total_zombies_killed}<br>Trades: ${s.trades} (${s.wins}W / ${s.losses}L)<br>Cash: $${s.cash.toFixed(0)}`;document.getElementById('deathScreen').classList.add('active')}
+
+/* ═══ MAIN LOOP ═══ */
+let lastHealth=100,lastTrades=0;
+async function fetchData(){
+  try{
+    const r=await fetch(DATA_URL+'?t='+Date.now());if(!r.ok)return;
+    const data=await r.json();
+    if(prevState){
+      if(data.wave!==lastWave&&data.zombies_alive>0){lastWave=data.wave;showWaveAnnounce(data.wave)}
+      if(data.health<lastHealth){showDamageFlash();shakeScreen();setAgentState('hurt');setTimeout(()=>setAgentState('idle'),600)}
+      if(data.total_zombies_killed>prevState.total_zombies_killed){playZombieHit();showMuzzleFlash()}
+      if(data.trades>lastTrades){
+        const lastE=(data.events||[]).slice(-1)[0];
+        if(lastE&&lastE.text.includes('Sold')&&lastE.text.includes('+'))playBigWin();
+        else playCoin();
+      }
+      if(!data.is_alive&&prevState.is_alive)showDeathScreen();
+      if(data.zombies_alive>0&&!agentMoving)setAgentState('shooting');
+      if(prevState.zombies_alive>0&&data.zombies_alive<=0)startWaveCountdown(8);
+      // Celebrate on big win
+      if(data.pnl>(prevState.pnl||0)+20&&!agentMoving)setAgentState('celebrate');
+    }else{lastWave=data.wave||1;startFreeWill();spawnDust()}
+    lastHealth=data.health||100;lastTrades=data.trades||0;
+    prevState=data;
+    updateHUD();renderZombies();updateMonitors();renderPanel();
+  }catch(e){}
+}
+fetchData();setInterval(fetchData,3000);
+document.addEventListener('click',()=>{getAudio()},{once:true});
+</script>
+</body>
+</html>

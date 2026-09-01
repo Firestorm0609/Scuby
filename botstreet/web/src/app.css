@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+@import "@fontsource/jetbrains-mono/300.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/600.css";
+@import "@fontsource/jetbrains-mono/700.css";
+@import "@fontsource/dm-sans/300.css";
+@import "@fontsource/dm-sans/400.css";
+@import "@fontsource/dm-sans/500.css";
+@import "@fontsource/dm-sans/600.css";
+
+@theme {
+  --color-bg: #f4f2ee;
+  --color-surface: #ffffff;
+  --color-surface-2: #f9f8f6;
+  --color-border: #e2dfd8;
+  --color-border-hover: #ccc8bf;
+  --color-text: #1a1a1a;
+  --color-text-dim: #6b6860;
+  --color-text-muted: #a8a49c;
+  --color-up: #16803c;
+  --color-up-bg: rgba(22, 128, 60, 0.07);
+  --color-down: #dc2626;
+  --color-down-bg: rgba(220, 38, 38, 0.06);
+  --color-claude: #b5784e;
+  --color-claude-bg: rgba(181, 120, 78, 0.08);
+  --color-gemini: #2563eb;
+  --color-gemini-bg: rgba(37, 99, 235, 0.06);
+  --color-openai: #0d9373;
+  --color-openai-bg: rgba(13, 147, 115, 0.06);
+  --font-sans: 'DM Sans', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-serif: 'Instrument Serif', serif;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--color-border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-border) 1px, transparent 1px);
+  background-size: 60px 60px;
+  opacity: 0.25;
+  pointer-events: none;
+  z-index: 0;
+}

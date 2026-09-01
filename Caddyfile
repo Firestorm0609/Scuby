@@ -1,0 +1,18 @@
+vultvision.me {
+	# 1. Serve the React Frontend
+	# Make sure your built files are actually in this folder!
+	root * /root/client/dist
+
+	# 2. Compress assets for speed
+	encode gzip
+
+	# 3. Serve files, but fallback to index.html for React Router
+	file_server
+	try_files {path} /index.html
+}
+
+api.vultvision.me {
+	# 4. Proxy API requests to Python
+	# We let Flask handle the CORS logic, it's cleaner.
+	reverse_proxy localhost:8000
+}

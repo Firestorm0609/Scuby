@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Environment (contains secrets)
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+contracts/*.json
+!contracts/DriftRace.sol
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Python
+*.egg-info/
+dist/
+build/
+
+# Logs
+*.log

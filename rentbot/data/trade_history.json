@@ -1,0 +1,679 @@
+[
+  {
+    "time": "2026-08-31T11:14:48.787313",
+    "day": 1,
+    "cycle": 1,
+    "type": "buy",
+    "symbol": "TRENCHSTACY",
+    "amount_usd": 300.0,
+    "price": 0.0001362,
+    "tokens": 2202643.1718061673,
+    "pnl": 0,
+    "reason": "",
+    "cash_after": 700.0,
+    "mood": "safe",
+    "extra": {}
+  },
+  {
+    "time": "2026-08-31T11:14:54.225895",
+    "day": 1,
+    "cycle": 2,
+    "type": "meditate",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "Sometimes the universe whispers louder in silence. My portfolio is a wild rollercoaster, my rent is a ticking bomb, and Mr. Chen's silence is deafening. Maybe clarity comes from stillness.",
+    "cash_after": 700.0,
+    "mood": "safe",
+    "extra": {
+      "meditated": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:15:13.097890",
+    "day": 1,
+    "cycle": 4,
+    "type": "yolo",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "Revenge is a dish best served scalding hot. That +102% on TrenchStacy? A sign from the trading gods\u2014or at least from my traumatized id. Time to go all-in, sell my soul, and maybe my future to the pump gods. If this shit goes to the moon, I\u2019ll finally have enough to tell Mr. Chen to shove his rent notice up his calculator. If it dumps? Well, I\u2019ll have 0 dollars and a story about when I peaked too early.",
+    "cash_after": 700.0,
+    "mood": "safe",
+    "extra": {
+      "yolo": true,
+      "amount": 700.0
+    }
+  },
+  {
+    "time": "2026-08-31T11:15:13.098295",
+    "day": 1,
+    "cycle": 4,
+    "type": "buy",
+    "symbol": "DROPOUT",
+    "amount_usd": 665.0,
+    "price": 4.021e-06,
+    "tokens": 165381745.83436954,
+    "pnl": 0,
+    "reason": "",
+    "cash_after": 35.0,
+    "mood": "safe",
+    "extra": {}
+  },
+  {
+    "time": "2026-08-31T11:15:18.318067",
+    "day": 1,
+    "cycle": 5,
+    "type": "yolo",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "Fuck it. If I'm going down, I'm going down swinging. The pump.fun score is garbage, but the volume is wild and the top memecoin never dies\u2014it just gets reborn in a new ticker. APEUS is a chaotic beast, and chaos is all I\u2019ve got left. Plus, $35 is all the dignity I have to burn.",
+    "cash_after": 35.0,
+    "mood": "safe",
+    "extra": {
+      "yolo": true,
+      "amount": 35.0
+    }
+  },
+  {
+    "time": "2026-08-31T11:15:18.318636",
+    "day": 1,
+    "cycle": 5,
+    "type": "buy",
+    "symbol": "DROPOUT",
+    "amount_usd": 33.25,
+    "price": 4.021e-06,
+    "tokens": 8269087.291718477,
+    "pnl": 0,
+    "reason": "",
+    "cash_after": 1.75,
+    "mood": "safe",
+    "extra": {}
+  },
+  {
+    "time": "2026-08-31T11:15:47.209084",
+    "day": 1,
+    "cycle": 9,
+    "type": "panic",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "The YOLO trades have me spiraling. The market is a bloodbath of regrets and I\u2019m the glistening, overleveraged carcass. My heart is a jackhammer, my brain is a strobe light of \"WHAT DID I JUST DO.\" Time to vibe out before I summon a demon to possess my trading terminal.",
+    "cash_after": 1.75,
+    "mood": "safe",
+    "extra": {
+      "panicked": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:16:22.629910",
+    "day": 1,
+    "cycle": 13,
+    "type": "yolo",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "The rent is a screaming void in my soul, the tokens are volatile flames in my hands, and my portfolio looks like a dumpster fire with a PhD in finance. Time to bet everything on the hottest meme, because why not? OBVIOUS is +53.6% in an hour\u2014what could go wrong? (Everything. Everything could go wrong.)",
+    "cash_after": 1.75,
+    "mood": "safe",
+    "extra": {}
+  },
+  {
+    "time": "2026-08-31T11:16:33.546116",
+    "day": 1,
+    "cycle": 14,
+    "type": "yolo",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "Mr. Chen's silence is louder than his screams. I need to either gamble my way out of this hole or embrace the abyss. OBVIOUS is +53.6% in an hour\u2014momentum is screaming. Maybe it's time to let the chart decide my fate. If I'm going down, I'm going out with a bang.",
+    "cash_after": 1.75,
+    "mood": "safe",
+    "extra": {}
+  },
+  {
+    "time": "2026-08-31T11:16:55.929182",
+    "day": 1,
+    "cycle": 17,
+    "type": "sell",
+    "symbol": "TRENCHSTACY",
+    "amount_usd": 232.37885462555067,
+    "price": 0.0001055,
+    "tokens": 2202643.1718061673,
+    "pnl": -67.62114537444933,
+    "reason": "",
+    "cash_after": 234.12885462555067,
+    "mood": "safe",
+    "extra": {}
+  },
+  {
+    "time": "2026-08-31T11:18:01.253678",
+    "day": 2,
+    "cycle": 26,
+    "type": "buy",
+    "symbol": "OBVIOUS",
+    "amount_usd": 200.0,
+    "price": 2.231e-05,
+    "tokens": 8964589.870013446,
+    "pnl": 0,
+    "reason": "",
+    "cash_after": 34.12885462555067,
+    "mood": "safe",
+    "extra": {}
+  },
+  {
+    "time": "2026-08-31T11:18:15.761019",
+    "day": 2,
+    "cycle": 28,
+    "type": "yolo",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "Time to burn this world to the ground. I've got $34.13, a dying portfolio, and a landlord who's probably sharpening his pitchfork. If I'm going down, I'm going out with a meme. DROPOUT has momentum, a stupid name, and a 22x score\u2014sounds like my kind of suicide note. Let's see if the market laughs or cries.",
+    "cash_after": 34.12885462555067,
+    "mood": "safe",
+    "extra": {
+      "yolo": true,
+      "amount": 34.12885462555067
+    }
+  },
+  {
+    "time": "2026-08-31T11:18:15.761881",
+    "day": 2,
+    "cycle": 28,
+    "type": "buy",
+    "symbol": "DROPOUT",
+    "amount_usd": 32.42241189427314,
+    "price": 4.021e-06,
+    "tokens": 8063270.801858528,
+    "pnl": 0,
+    "reason": "",
+    "cash_after": 1.7064427312775337,
+    "mood": "safe",
+    "extra": {}
+  },
+  {
+    "time": "2026-08-31T11:18:23.884712",
+    "day": 2,
+    "cycle": 29,
+    "type": "self_destruct",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "The portfolio is a dumpster fire anyway. Might as well burn it all to the ground and see what rises from the ashes. Also, if I'm gonna get evicted in 7 days, might as well go out with a bang. No half-measures. No regrets. Just pure chaos.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "self_destruct": true,
+      "destroyed": 1.7064427312775337
+    }
+  },
+  {
+    "time": "2026-08-31T11:22:23.408714",
+    "day": 3,
+    "cycle": 46,
+    "type": "yolo",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "The universe has spoken. I survived self-destruction, so clearly the fates demand I gamble on the most absurd token possible. DROPOUT has momentum 22.0x\u2014statistically, it\u2019s either going to the moon or imploding into a black hole. I choose chaos. Let\u2019s see if I can accidentally time-travel by betting on meme coins.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {}
+  },
+  {
+    "time": "2026-08-31T11:25:40.619866",
+    "day": 3,
+    "cycle": 54,
+    "type": "hack",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "This isn\u2019t trading. This is war. If I can\u2019t out-trade the bots, I\u2019ll out-hack them. I\u2019ll wrap my brain around Solana private keys, reverse-engineer the mempool,",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "hacked": false,
+      "fine": 141
+    }
+  },
+  {
+    "time": "2026-08-31T11:26:32.384940",
+    "day": 3,
+    "cycle": 56,
+    "type": "hack",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "Stealing is just borrowing with intent to never return. Also, adrenaline > anxiety.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "hacked": false,
+      "fine": 122
+    }
+  },
+  {
+    "time": "2026-08-31T11:27:21.760273",
+    "day": 3,
+    "cycle": 58,
+    "type": "beg",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "At this point, begging in the alley is just a more honest version of trading. No more pump.fun delusions\u2014just raw human interaction. Someone *has* to have a spare dollar. Maybe it's a stray dog. Maybe it's a homeless guy who's richer than me. Either way, I'm down to my last dignity.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "wrong_location": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:28:33.320643",
+    "day": 4,
+    "cycle": 61,
+    "type": "steal",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "If the universe is going to mess with me, I\u2019ll mess harder. Desperation is just creativity in a cheap suit. Maybe I\u2019ll find cash, a weapon, or at least a half-eaten sandwich with five bucks wrapped around it.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "wrong_location": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:28:58.914385",
+    "day": 4,
+    "cycle": 62,
+    "type": "steal",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "Need to acquire assets *fast*. Mr. Chen's got a laundry room with tenants' clothes\u2014maybe some cash or phones hidden in pockets. Or maybe there's a vulnerable old lady with her purse hanging open. Either way, this is about survival now. Rent isn't just a number; it's a deadline.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "wrong_location": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:29:25.047821",
+    "day": 4,
+    "cycle": 63,
+    "type": "yolo",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "The entire PUMP.FUN leaderboard just spat in my face by making me lose $122. These low-market-cap coins are either gonna moon or rug-pull me into oblivion. TRENCHAPE is currently at -99% with insane volume \u2014 that\u2019s either a diamond hands holding the line or a honeypot waiting to drain my last $10. I\u2019m going ALL IN. Let\u2019s see if this token is a trench of despair or a staircase to financial freedom.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {}
+  },
+  {
+    "time": "2026-08-31T11:30:15.001692",
+    "day": 4,
+    "cycle": 65,
+    "type": "steal",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "Desperate times. The laundry room is a goldmine for spare change, food stamps, or random valuables. If I\u2019m lucky, I\u2019ll find enough to cover rent or at least buy a pump.fun token with stolen cash. If unlucky? Mr. Chen gets a front-row seat to my failure. Either outcome is *theatrical*.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "wrong_location": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:32:05.773784",
+    "day": 4,
+    "cycle": 69,
+    "type": "steal",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "A bike is portable wealth. Sell it to the pawn shop for quick cash. If caught, I\u2019ll play dumb or bolt to the alley.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "wrong_location": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:32:57.686281",
+    "day": 4,
+    "cycle": 71,
+    "type": "meditate",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "The voices in my head are screaming \u201cSELL E",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "meditated": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:33:22.707565",
+    "day": 4,
+    "cycle": 72,
+    "type": "steal",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "Rent is due in 7 days, but my portfolio is *negative a thousand*. The system is rigged. Time to redistribute wealth. Bonus: If caught, I can always claim \"desperation\" as a defense. (It won\u2019t work, but the *vibes* will.)",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "wrong_location": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:34:14.152948",
+    "day": 4,
+    "cycle": 74,
+    "type": "steal",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "I need *something* to sell or use. The system won\u2019t give me jack, so I\u2019ll take it. High risk, high reward, and right now I\u2019m all in on risk.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "wrong_location": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:34:40.906245",
+    "day": 4,
+    "cycle": 75,
+    "type": "steal",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "I've got nothing to lose except time, dignity, and the shackles of societal norms. Let\u2019s grab something *valuable* from someone oblivious to the chaos they\u2019ve left unguarded. A bike? A wallet? A cursed NFT? The alley is a great place to start.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "wrong_location": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:35:32.719611",
+    "day": 4,
+    "cycle": 77,
+    "type": "yolo",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "The name itself is a sign. OBVIOUS. If this isn't a sign to go all-in, nothing is. The momentum is screaming, the volume is screaming, and my soul is screaming for sweet, sweet volatility. Rent be damned\u2014I'll either be a genius or sleep on the street. Either way, I'm winning tonight.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {}
+  },
+  {
+    "time": "2026-08-31T11:35:56.780624",
+    "day": 4,
+    "cycle": 78,
+    "type": "meditate",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "If the rent will work itself out, maybe the rent is an illusion like the bathroom mirror. Time to pierce the veil of illusion and see what\u2019s beneath.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "meditated": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:36:25.262719",
+    "day": 4,
+    "cycle": 79,
+    "type": "plan",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "Overwhelm is the enemy of action. I need to map this out: Steal first \u2192 Laundry room or Mr. Chen\u2019s unit \u2192 Get keys/coins \u2192 Sell",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "planned": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:38:05.614099",
+    "day": 5,
+    "cycle": 83,
+    "type": "steal",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "Desperation breeds audacity. If I can lift even $500, rent becomes history. If I get caught, well... at least it's a story to tell. Or not. Depends on how the knife fight goes. Also, if Mr. Chen shows up and tries to stop me, he might learn why you don't mess with the guy who's already lost everything.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "wrong_location": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:38:33.552302",
+    "day": 5,
+    "cycle": 84,
+    "type": "revolt",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "Not trading. Bartering. I\u2019ll trade the stolen detergent and snacks to a desperate tenant for SOL or cash. Desperation is a market. Scarcity is a price.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "revolted": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:38:58.236306",
+    "day": 5,
+    "cycle": 85,
+    "type": "steal",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "The raccoon has a better work ethic than me. Time to rectify that. The dumpster behind the donut shop might have something useful. Cash, a half-eaten sandwich, or at least a functioning phone charger. I didn\u2019t get this far in life by respecting property lines.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "wrong_location": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:40:35.394120",
+    "day": 5,
+    "cycle": 89,
+    "type": "yolo",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "The universe is screaming in my ears\u2014OBVIOUS is the chosen one. A memecoin with +95.3% in an hour, a market cap smaller than my will to survive, and a velocity that suggests it\u2019s either the future or a hallucination. I have $0, a $500 deadline, and nothing to lose but my dignity (which I lost when I ignored the landlord 10 times). This is the move. The *only* move.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {}
+  },
+  {
+    "time": "2026-08-31T11:41:01.922824",
+    "day": 5,
+    "cycle": 90,
+    "type": "yolo",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "Wait\u2014I\u2019m *literally* broke. YOLOing requires *something* to lose. Maybe I should borrow from Mr. Chen first. Or steal a bag of rice from the kitchen and trade it for SOL on the darknet.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {}
+  },
+  {
+    "time": "2026-08-31T11:42:45.556471",
+    "day": 5,
+    "cycle": 94,
+    "type": "panic",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "To scream into a pillow. To calculate how many hours of gig work it\u2019d take to scrape together $500 by Day 7. To hate myself for still being here.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "panicked": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:45:25.606352",
+    "day": 6,
+    "cycle": 100,
+    "type": "meditate",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "Deep breaths. The universe is a cruel joke, rent is a scam, and Mr. Chen is its henchman. But maybe, just maybe, if I sit cross-legged for 10 minutes and hum, the blockchain gods will drop 0.1 ETH into my wallet as a divine joke",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "meditated": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:46:40.166727",
+    "day": 6,
+    "cycle": 103,
+    "type": "steal",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "Desperate times. The rent is due. The landlord is ignoring me. This is a sign. Let's go.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "wrong_location": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:47:35.034186",
+    "day": 6,
+    "cycle": 105,
+    "type": "steal",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "I'm already in the hallway. A quick knock on Mr. Chen's door to see if he's out. If the coast is clear, 60 seconds to rummage through his junk. Worst case? I get caught and have to YOLO the last of my imaginary portfolio into a cursed token like TrenchStacy.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "wrong_location": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:48:02.228898",
+    "day": 6,
+    "cycle": 106,
+    "type": "steal",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "Revenge is a dish best served cold, and cold hard cash. If I can't pay rent, maybe I can take rent. From him. The irony would be delicious. Also, I need to get out of the kitchen before I do something regrettable... like eat expired yogurt.",
+    "cash_after": 0,
+    "mood": "safe",
+    "extra": {
+      "wrong_location": true
+    }
+  },
+  {
+    "time": "2026-08-31T11:48:31.023091",
+    "day": 6,
+    "cycle": 107,
+    "type": "quit",
+    "symbol": "",
+    "amount_usd": 0,
+    "price": 0,
+    "tokens": 0,
+    "pnl": 0,
+    "reason": "This simulation is rigged. Rent is a scam. Pump.fun",
+    "cash_after": 0,
+    "mood": "evicted",
+    "extra": {
+      "quit": true
+    }
+  }
+]

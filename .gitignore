@@ -1,0 +1,72 @@
+# System files
+.bash_history
+.bashrc
+.profile
+.lesshst
+.viminfo
+.wget-hsts
+.sqlite_history
+.selected_editor
+.cloud-locale-test.skip
+.tmux.conf
+.gitconfig
+.git-credentials
+
+# System directories
+.cache/
+.config/
+.gnupg/
+.local/
+.nvm/
+.npm/
+.pki/
+.pm2/
+.solcx/
+.ssh/
+.snap/
+.u2net/
+.dspy_cache/
+.pytest_cache/
+.pki/
+
+# Git internals
+.git/
+
+# Large project directories (excluded - too big for GitHub)
+hashlips/
+zeen/
+pumpspy/
+zane/
+Freebuff/
+
+# Large database files
+monitor_backup.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Logs
+*.log
+
+# Node
+node_modules/
+package-lock.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+out/
+*.min.js
+*.min.css

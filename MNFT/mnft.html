@@ -1,0 +1,2352 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>HOODSTREET Trait Generator</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<style>
+
+  @import url('https://fonts.googleapis.com/css2?family=Anton&family=JetBrains+Mono:wght@400;500;700;800&display=swap');
+
+  :root {
+    --ink: #F7F2E4;
+    --panel: #EFE8D5;
+    --panel-2: #E6DCC3;
+    --line: #c9bd9c;
+    --paper: #241f18;
+    --paper-dim: #7d7461;
+    --orange: #2c2822;
+    --rust: #6f6552;
+    --caution: #d8cca3;
+    --font-display: 'Anton', 'Arial Narrow', sans-serif;
+    --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      repeating-linear-gradient(0deg, rgba(0,0,0,0.025) 0px, rgba(0,0,0,0.025) 1px, transparent 1px, transparent 3px),
+      radial-gradient(ellipse at 20% -10%, #ffffff 0%, transparent 55%),
+      var(--ink);
+    color: var(--paper);
+    font-family: var(--font-mono);
+    padding: 24px 16px 60px;
+    background-attachment: fixed;
+  }
+
+  .wrap { max-width: 640px; margin: 0 auto; }
+
+  header { position: relative; padding-bottom: 18px; margin-bottom: 4px; border-bottom: 3px solid var(--orange); }
+
+  .badge {
+    display: inline-block;
+    background: var(--caution);
+    color: #241f18;
+    font-family: var(--font-mono);
+    font-weight: 800;
+    font-size: 11px;
+    letter-spacing: 3px;
+    padding: 4px 9px;
+    margin-bottom: 12px;
+    transform: rotate(-1.5deg);
+    box-shadow: 3px 3px 0 rgba(0,0,0,0.4);
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-size: 46px;
+    font-weight: 400;
+    margin: 0;
+    letter-spacing: 1px;
+    line-height: 0.9;
+    text-transform: uppercase;
+    color: var(--paper);
+    -webkit-text-stroke: 1px rgba(36,31,24,0.15);
+    text-shadow: 3px 3px 0 rgba(36,31,24,0.12);
+  }
+
+  h1 .sub { display: block; font-size: 15px; letter-spacing: 5px; color: var(--rust); text-shadow: none; -webkit-text-stroke: 0; margin-top: 6px; font-family: var(--font-mono); font-weight: 700; }
+
+  p.desc { opacity: 0.65; font-size: 12.5px; margin-top: 12px; line-height: 1.6; max-width: 50ch; }
+
+  .drop {
+    border: 2px dashed var(--line);
+    padding: 36px 20px;
+    text-align: center;
+    background: var(--panel);
+    margin-top: 20px;
+    position: relative;
+  }
+  .drop::before {
+    content: ' UPLOAD ZONE';
+    position: absolute; top: -11px; left: 50%; transform: translateX(-50%);
+    background: var(--paper); padding: 0 10px; font-size: 10px; letter-spacing: 2px;
+    color: var(--ink); font-weight: 700;
+  }
+
+  .drop p { font-size: 13px; opacity: 0.85; margin-bottom: 10px; }
+
+  .hint { font-size: 11px; opacity: 0.55; margin-bottom: 16px; line-height: 1.7; }
+
+  .hint strong { color: var(--rust); }
+
+  button { font-family: var(--font-mono); }
+
+  button.primary {
+    background: var(--orange);
+    color: var(--ink);
+    border: none;
+    font-weight: 800;
+    font-size: 13px;
+    letter-spacing: 1.5px;
+    padding: 13px 22px;
+    cursor: pointer;
+    text-transform: uppercase;
+    box-shadow: 4px 4px 0 var(--rust);
+    transition: transform .08s ease;
+  }
+  button.primary:active { transform: translate(2px,2px); box-shadow: 2px 2px 0 var(--rust); }
+  button.primary:disabled { cursor: wait; opacity: 0.7; }
+
+  .error { color: var(--paper); font-weight: 700; font-size: 12px; margin-top: 14px; }
+
+  .toprow {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 10.5px; opacity: 0.6; margin: 20px 0 16px; letter-spacing: 1.5px;
+    color: var(--paper-dim);
+  }
+
+  .toprow button {
+    background: none; border: none; color: var(--rust); opacity: 0.9;
+    font-size: 10.5px; text-decoration: none; border-bottom: 1px solid var(--rust);
+    cursor: pointer; letter-spacing: 1.5px; padding: 0 0 1px;
+  }
+
+  .tiers { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 20px; }
+
+  .tiers button {
+    background: var(--panel); color: var(--paper); border: 1px solid var(--line);
+    border-top: 3px solid var(--rust);
+    font-weight: 700; font-size: 10px; letter-spacing: 0.5px; padding: 11px 2px;
+    cursor: pointer; text-transform: uppercase;
+  }
+
+  .tiers button.active { background: var(--orange); color: var(--ink); border-top-color: var(--orange); }
+  .tiers button:disabled { cursor: wait; }
+
+  .canvas-box {
+    aspect-ratio: 1 / 1; background: var(--panel);
+    background-image:
+      linear-gradient(rgba(36,31,24,0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(36,31,24,0.05) 1px, transparent 1px);
+    background-size: 24px 24px;
+    border: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 16px; overflow: hidden;
+  }
+
+  .canvas-box span { font-size: 11px; opacity: 0.4; letter-spacing: 1px; text-transform: uppercase; }
+  .canvas-box img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+
+  button.download {
+    width: 100%; background: var(--paper); color: var(--ink); border: none;
+    font-weight: 800; font-size: 13px; letter-spacing: 1.5px; padding: 13px;
+    cursor: pointer; margin-bottom: 20px; text-transform: uppercase;
+  }
+
+  .traits-title {
+    text-transform: uppercase; letter-spacing: 2px; color: var(--rust);
+    margin-bottom: 8px; font-weight: 700; font-size: 11px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .traits-title::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+
+  .trait-row {
+    display: flex; justify-content: space-between; padding: 7px 2px;
+    border-bottom: 1px solid var(--line); font-size: 11px; opacity: 0.9;
+  }
+
+  .trait-row .layer { opacity: 0.5; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
+  .trait-row .rarity { color: var(--rust); font-weight: 700; font-size: 10px; text-transform: uppercase; }
+
+  #fileInput { display: none; }
+
+  .extrarow { display: flex; gap: 6px; margin-bottom: 20px; }
+
+  .extrarow button {
+    flex: 1; background: var(--panel); color: var(--paper); border: 1px solid var(--line);
+    border-top: 3px solid var(--rust);
+    font-weight: 700; font-size: 11px; letter-spacing: 0.5px; padding: 12px 4px;
+    cursor: pointer; text-transform: uppercase;
+  }
+
+  .extrarow button.random { background: var(--orange); color: var(--ink); border-top-color: var(--orange); }
+  #editPreviewOriginal, #editPreviewOutline { aspect-ratio: 1/1; }
+  .extrarow button:disabled { cursor: wait; opacity: 0.7; }
+
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(247,242,228,0.97);
+    z-index: 100; overflow-y: auto; padding: 24px 16px;
+  }
+
+  .modal-overlay.open { display: block; }
+  .modal-inner { max-width: 640px; margin: 0 auto; }
+
+  .modal-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 16px; border-bottom: 2px solid var(--line); padding-bottom: 12px;
+  }
+
+  .modal-header h2 {
+    font-family: var(--font-display); font-weight: 400;
+    font-size: 22px; text-transform: uppercase; letter-spacing: 1px; margin: 0; color: var(--paper);
+  }
+
+  .modal-header button {
+    background: none; border: 1px solid var(--paper); color: var(--paper);
+    font-size: 11px; padding: 7px 12px; cursor: pointer;
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+
+  .oneofone-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .oneofone-item { background: var(--panel); border: 1px solid var(--line); cursor: pointer; position: relative; }
+  .oneofone-item::before {
+    content: '1/1'; position: absolute; top: 6px; left: 6px; z-index: 1;
+    background: var(--caution); color: var(--paper); font-size: 9px; font-weight: 800;
+    padding: 2px 6px; letter-spacing: 1px;
+  }
+  .oneofone-item img { width: 100%; display: block; aspect-ratio: 1/1; object-fit: contain; }
+  .oneofone-item .oo-name {
+    font-size: 10px; padding: 7px 8px; opacity: 0.8; letter-spacing: 0.5px; text-transform: uppercase;
+    border-top: 1px solid var(--line);
+  }
+
+  .oneofone-empty { font-size: 12px; opacity: 0.5; padding: 20px 0; }
+
+  .align-row { display: flex; gap: 10px; margin-bottom: 14px; }
+  .align-col { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+  .align-label { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; opacity: 0.6; }
+  .align-row select, .align-controls select {
+    width: 100%; padding: 9px; background: var(--panel); color: var(--paper);
+    border: 1px solid var(--line); font-family: inherit; font-size: 11px;
+  }
+  .align-controls { background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--rust); padding: 12px; }
+  .align-modes { display: flex; gap: 6px; margin-bottom: 12px; }
+  .align-modes button {
+    flex: 1; background: var(--ink); color: var(--paper); border: 1px solid var(--line);
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.5px; padding: 9px 4px;
+    cursor: pointer; text-transform: uppercase;
+  }
+  .align-modes button.active { background: var(--orange); color: var(--ink); border-color: var(--orange); }
+  #alignOpacity { width: 100%; }
+
+  .bulk-section { margin-top: 18px; border-top: 2px solid var(--line); padding-top: 14px; }
+  .bulk-layers { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .bulk-layers button {
+    background: var(--ink); color: var(--paper); border: 1px solid var(--line);
+    font-size: 10px; font-weight: 700; letter-spacing: 0.5px; padding: 8px 10px;
+    cursor: pointer; text-transform: uppercase; transition: background .1s, color .1s;
+  }
+  .bulk-layers button.active { background: var(--orange); color: var(--ink); border-color: var(--orange); }
+  .bulk-layers button.partial { background: var(--caution); color: var(--paper); border-color: var(--caution); }
+  .bulk-trait-list { max-height: 260px; overflow-y: auto; border: 1px solid var(--line); background: var(--ink); margin-bottom: 10px; }
+  .bulk-trait-item {
+    display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    border-bottom: 1px solid rgba(201,189,156,0.2); font-size: 11px;
+  }
+  .bulk-trait-item:last-child { border-bottom: none; }
+  .bulk-trait-item label { display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1; min-width: 0; }
+  .bulk-trait-item input[type=checkbox] { width: 14px; height: 14px; flex-shrink: 0; }
+  .bulk-trait-item .bulk-trait-layer { opacity: 0.45; font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; flex-shrink: 0; width: 70px; }
+  .bulk-trait-item .bulk-trait-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bulk-trait-item .bulk-trait-rarity { opacity: 0.55; font-size: 9px; text-transform: uppercase; flex-shrink: 0; }
+  .bulk-progress { height: 8px; background: var(--ink); overflow: hidden; margin: 8px 0; border: 1px solid var(--line); }
+  .bulk-progress-bar { height: 100%; width: 0%; background: var(--orange); transition: width .1s linear; }
+  ::selection { background: var(--caution); color: var(--paper); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--rust); outline-offset: 2px; }
+</style>
+
+</head>
+
+<body>
+
+<div class="wrap">
+
+  <header>
+
+    <div class="badge">TRAIT GENERATOR</div>
+
+    <h1>HOODSTREET<span class="sub">LADS COLLECTION</span></h1>
+
+    <p class="desc">Upload a .zip of your trait PNGs. Pick a rarity tier. Generate one-off pieces weighted toward that tier, nothing touches a server, it all runs in your browser.</p>
+
+  </header>
+
+
+
+  <div id="uploadScreen" class="drop">
+
+    <p>Upload a .zip of your trait PNGs  works on phone or desktop.</p>
+
+    <p class="hint">
+
+      Either folders <strong>Layer/Rarity/Name.png</strong> inside the zip, or flat files named <strong>Layer_Rarity_Name.png</strong><br>
+
+      e.g. <em>Clothing/Rare/Bomber.png</em> or <em>Clothing_Rare_Bomber.png</em><br>
+
+      Layers (drawn in this order): Background, Body, Clothing, Face, Eyes, Hair &amp; Headwear, Mouth, Accessories, Handheld
+
+    </p>
+
+    <button class="primary" id="uploadBtn">Upload Zip</button>
+
+    <input type="file" id="fileInput" accept=".zip">
+
+    <p class="error" id="errorMsg" style="display:none;"></p>
+
+  </div>
+
+
+
+  <div id="mainScreen" style="display:none;">
+
+    <div class="toprow">
+
+      <span id="layerCount">0 LAYERS LOADED</span>
+
+      <button id="changeFilesBtn">change zip</button>
+
+    </div>
+
+    <div class="tiers" id="tierButtons" style="display:none;"></div>
+
+    <div id="supplyConfig" style="display:none;margin-bottom:20px;background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--rust);padding:12px;">
+      <div class="traits-title">Collection setup</div>
+      <label class="align-label">Total supply (includes 1/1s)</label>
+      <div class="tiers" id="supplyPresets" style="grid-template-columns:repeat(4,1fr);margin:6px 0 10px;"></div>
+      <div class="extrarow" style="align-items:center;margin-bottom:14px;">
+        <label class="align-label" style="flex:0 0 auto;white-space:nowrap;">Custom:</label>
+        <input id="customSupply" type="number" min="1" max="200000" placeholder="e.g. 7777" style="flex:1;padding:11px;background:var(--ink);color:var(--paper);border:1px solid var(--line);font-family:inherit;font-size:12px;">
+      </div>
+      <label class="align-label">Metadata template</label>
+      <select id="metadataTemplate" style="width:100%;padding:9px;margin:6px 0 10px;background:var(--ink);color:var(--paper);border:1px solid var(--line);font-family:inherit;font-size:11px;">
+        <option value="standard">Standard - name, description, image, attributes</option>
+        <option value="opensea">OpenSea extended - + external_url</option>
+        <option value="minimal">Minimal - name, image, attributes only</option>
+        <option value="verbose">Verbose - + symbol, collection name, edition</option>
+      </select>
+      <div class="extrarow" style="margin-bottom:8px;">
+        <input id="collectionName" placeholder="Collection name" value="HoodStreet" style="flex:1;padding:11px;background:var(--ink);color:var(--paper);border:1px solid var(--line);font-family:inherit;font-size:12px;">
+        <input id="collectionSymbol" placeholder="Symbol e.g. HOOD" style="flex:1;padding:11px;background:var(--ink);color:var(--paper);border:1px solid var(--line);font-family:inherit;font-size:12px;">
+      </div>
+      <input id="collectionDesc" placeholder="Description" value="HoodStreet Lads" style="width:100%;padding:11px;margin-bottom:8px;background:var(--ink);color:var(--paper);border:1px solid var(--line);font-family:inherit;font-size:12px;">
+      <input id="externalUrlBase" placeholder="External URL base (optional), e.g. https://hoodstreet.io/lad" style="width:100%;padding:11px;margin-bottom:8px;background:var(--ink);color:var(--paper);border:1px solid var(--line);font-family:inherit;font-size:12px;">
+      <label style="display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:0.5px;text-transform:uppercase;cursor:pointer;">
+        <input type="checkbox" id="includeBodyAttr" style="width:16px;height:16px;">
+        Include Body as a trait attribute
+      </label>
+    </div>
+
+    <div class="extrarow">
+
+      <button class="random" id="randomBtn">GENERATE LAD</button>
+
+      <button id="editTraitsBtn">Edit Traits</button>
+
+      <button id="oneOfOneBtn">1/1s</button>
+      <button id="alignBtn">Align Check</button>
+      <button id="buildCollectionBtn">Build 4,444 Plan</button>
+
+    </div>
+
+    <div class="canvas-box" id="canvasBox"><span>generate a Lad</span></div>
+    <div id="buildMonitor" style="display:none;margin-bottom:20px;background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--rust);padding:14px;">
+      <div class="traits-title">Build monitor</div>
+      <div id="buildPreviewBox" style="display:none;aspect-ratio:1/1;max-width:220px;margin:0 0 10px;background:var(--ink);border:1px solid var(--line);overflow:hidden;"><img id="buildPreviewImg" style="width:100%;height:100%;object-fit:contain;image-rendering:pixelated;display:block;"></div>
+      <div style="height:10px;background:var(--ink);overflow:hidden;margin:8px 0 10px;border:1px solid var(--line);"><div id="buildProgressBar" style="height:100%;width:0%;background:var(--orange);transition:width .12s linear;"></div></div>
+      <p class="hint" id="buildLiveStatus" style="margin:0 0 6px;"></p>
+      <p class="hint" id="buildLiveStats" style="margin:0;"></p>
+      <div class="extrarow" style="margin-top:10px;margin-bottom:0;">
+        <button id="pauseBuildBtn">Pause</button>
+        <button id="stopBuildBtn">Stop</button>
+      </div>
+    </div>
+    <div id="collectionTools" style="display:none;margin-bottom:20px;">
+      <div class="traits-title">Production collection</div>
+      <p class="hint" id="collectionStatus"></p>
+      <input id="imageBaseUri" value="ipfs://REPLACE_IMAGE_CID" style="width:100%;padding:11px;margin-bottom:8px;background:var(--ink);color:var(--paper);border:1px solid var(--line);font-family:inherit;font-size:12px;" aria-label="Image base URI">
+      <div class="extrarow">
+        <button id="downloadDataBtn">Metadata + Stats</button>
+        <button id="exportBatchBtn">Export Next 100 JPGs</button>
+      </div>
+      <div class="extrarow">
+        <button id="exportAllBtn">Export All (auto)</button>
+      </div>
+      <div class="extrarow">
+        <button id="downloadCsvBtn">OpenSea CSV</button>
+      </div>
+      <p class="hint" style="margin:2px 0 10px;">CSV for OpenSea Studio's Media &amp; Metadata upload (Filename, Name, Description + one column per trait). Pair it with your exported images/ folder.</p>
+      <div class="extrarow" style="align-items:center;">
+        <label class="align-label" style="flex:0 0 auto;white-space:nowrap;">Batch size:</label>
+        <input id="exportBatchSize" type="number" min="1" max="2000" value="100" style="flex:1;padding:11px;background:var(--ink);color:var(--paper);border:1px solid var(--line);font-family:inherit;font-size:12px;">
+      </div>
+      <p class="hint" style="margin:2px 0 0;">Bigger batches = fewer zip downloads, but more memory used at once. 100-300 is safe on most phones; desktop can usually handle 500-1000+.</p>
+      <div class="extrarow">
+        <button id="deletePlanBtn">Delete Plan</button>
+      </div>
+    </div>
+
+    <canvas id="hiddenCanvas" style="display:none;"></canvas>
+
+    <div id="resultActions" style="display:none;">
+
+      <button class="download" id="downloadBtn">Download PNG</button>
+
+      <div class="traits-title">Traits rolled</div>
+
+      <div id="traitsList"></div>
+
+    </div>
+
+  </div>
+
+</div>
+
+
+
+<div class="modal-overlay" id="oneOfOneModal">
+
+  <div class="modal-inner">
+
+    <div class="modal-header">
+
+      <h2 id="oneOfOneTitle">1/1s</h2>
+
+      <button id="closeOneOfOneBtn">Close</button>
+
+    </div>
+
+    <div class="oneofone-grid" id="oneOfOneGrid"></div>
+
+  </div>
+
+</div>
+
+<div class="modal-overlay" id="alignModal">
+  <div class="modal-inner">
+    <div class="modal-header">
+      <h2>Align Check</h2>
+      <button id="closeAlignBtn">Close</button>
+    </div>
+    <p class="hint">Pick two layers to overlay. Use opacity to see through the top one, or Difference mode to light up any pixel offset. Onion mode flickers between the two so misalignment jumps out.</p>
+    <div class="align-row">
+      <div class="align-col">
+        <label class="align-label">Layer A (base)</label>
+        <select id="alignLayerA"></select>
+        <select id="alignTraitA"></select>
+      </div>
+      <div class="align-col">
+        <label class="align-label">Layer B (top)</label>
+        <select id="alignLayerB"></select>
+        <select id="alignTraitB"></select>
+      </div>
+    </div>
+    <div class="align-controls">
+      <div class="align-modes" id="alignModeButtons">
+        <button data-mode="normal" class="active">Normal</button>
+        <button data-mode="diff">Difference</button>
+        <button data-mode="onion">Onion Flicker</button>
+      </div>
+      <div id="alignOpacityWrap">
+        <label class="align-label">Layer B opacity: <span id="alignOpacityVal">50</span>%</label>
+        <input type="range" id="alignOpacity" min="0" max="100" value="50">
+      </div>
+    </div>
+    <div class="align-controls" style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <label style="display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:0.5px;text-transform:uppercase;cursor:pointer;">
+        <input type="checkbox" id="alignShowBodyOutline" style="width:16px;height:16px;">
+        Show Body outline
+      </label>
+      <select id="alignBodyRef" style="flex:1;min-width:140px;padding:9px;background:var(--panel);color:var(--paper);border:1px solid var(--line);font-family:inherit;font-size:11px;"></select>
+    </div>
+    <div class="canvas-box" id="alignCanvasBox" style="margin-top:14px;"><span>choose two traits</span></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="editTraitsModal">
+  <div class="modal-inner">
+    <div class="modal-header">
+      <h2>Edit Traits</h2>
+      <button id="closeEditTraitsBtn">Close</button>
+    </div>
+    <p class="hint">Add a black outline to traits to fix white traces along edges. Pick a layer and trait to preview, then adjust the outline thickness. The settings apply to all traits during generation and export.</p>
+    <div class="align-row">
+      <div class="align-col">
+        <label class="align-label">Layer</label>
+        <select id="editLayer"></select>
+      </div>
+      <div class="align-col">
+        <label class="align-label">Trait</label>
+        <select id="editTrait"></select>
+      </div>
+    </div>
+    <div class="align-controls">
+      <label style="display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:0.5px;text-transform:uppercase;cursor:pointer;margin-bottom:10px;">
+        <input type="checkbox" id="editOutlineEnabled" checked style="width:16px;height:16px;">
+        Apply outline
+      </label>
+      <div class="align-modes" id="editBgButtons" style="margin-bottom:10px;">
+        <button data-bg="white" class="active">White BG</button>
+        <button data-bg="black">Black BG</button>
+        <button data-bg="checker">Checker</button>
+      </div>
+      <div class="align-row" style="margin-bottom:0;">
+        <div class="align-col">
+          <label class="align-label">Outside (px)</label>
+          <input id="outlineOutside" type="range" min="0" max="10" value="2">
+          <span class="align-label" id="outsideVal">2</span>
+        </div>
+        <div class="align-col">
+          <label class="align-label">Inside (px)</label>
+          <input id="outlineInside" type="range" min="0" max="10" value="2">
+          <span class="align-label" id="insideVal">2</span>
+        </div>
+      </div>
+      <p class="hint" style="margin:8px 0 0;">Outside = black stroke beyond shape edge. Inside = black stroke into shape. Your ibisPaint preset is 2 outside, 2 inside.</p>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:10px;">
+      <div style="flex:1;text-align:center;">
+        <span class="align-label">Original</span>
+        <div class="canvas-box" id="editPreviewOriginal" style="margin-top:6px;"><span>loading...</span></div>
+      </div>
+      <div style="flex:1;text-align:center;">
+        <span class="align-label">With Outline</span>
+        <div class="canvas-box" id="editPreviewOutline" style="margin-top:6px;"><span>loading...</span></div>
+      </div>
+    </div>
+    <div class="bulk-section">
+      <div class="traits-title">Bulk Outline Export</div>
+      <p class="hint">Select traits that should get the outline applied, then download the full ZIP with the original folder structure (Layer/Rarity/Name.png). Unselected traits stay original.</p>
+      <div id="bulkLayerToggles" class="bulk-layers"></div>
+      <div class="extrarow" style="margin-bottom:10px;">
+        <button id="bulkSelectAllBtn">Select All</button>
+        <button id="bulkDeselectAllBtn">Deselect All</button>
+      </div>
+      <div class="bulk-trait-list" id="bulkTraitList"></div>
+      <div class="bulk-progress" id="bulkProgress" style="display:none;"><div class="bulk-progress-bar" id="bulkProgressBar"></div></div>
+      <p class="hint" id="bulkStatus" style="margin:4px 0 8px;"></p>
+      <div class="align-modes" id="bulkExportMode" style="margin-bottom:10px;">
+        <button data-mode="all" class="active">All Traits</button>
+        <button data-mode="selected">Selected Only</button>
+      </div>
+      <button class="primary" id="bulkDownloadBtn" style="width:100%;">Download ZIP</button>
+      <div class="extrarow" style="margin-top:8px;margin-bottom:0;">
+        <button id="bulkDownloadCsvBtn">Metadata CSV</button>
+        <button id="bulkDownloadJsonBtn">Metadata JSON</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+
+const LAYER_ORDER = ["Background","Body","Clothing","Face","Eyes","Hair & Headwear","Mouth","Accessories","Handheld"];
+
+const RARITY_TIERS = ["Common","Uncommon","Rare","Epic","Legendary"];
+const TIER_WEIGHTS = { Common:40, Uncommon:30, Rare:17, Epic:9, Legendary:4 };
+const OPTIONAL_CHANCE = { Face:0.20, Accessories:0.20, Handheld:0.15 };
+function pickAnyTrait(rarityMap) {
+  const all = Object.entries(rarityMap).flatMap(([rarity,es]) => es.filter(e=>e.name.toLowerCase()!=='none').map(entry=>({rarity,entry})));
+  if (!all.length) return null;
+  return all[Math.floor(Math.random()*all.length)];
+}
+function pickWeightedTrait(rarityMap) {
+  const tiers = RARITY_TIERS.filter(t => rarityMap[t] && rarityMap[t].some(e => e.name.toLowerCase() !== 'none'));
+  if (!tiers.length) return null;
+  const total = tiers.reduce((n,t)=>n+TIER_WEIGHTS[t],0); let r=Math.random()*total, tier=tiers[0];
+  for (const t of tiers) { r-=TIER_WEIGHTS[t]; if(r<0){tier=t;break;} }
+  const pool=rarityMap[tier].filter(e=>e.name.toLowerCase()!=='none');
+  return {rarity:tier, entry:pool[Math.floor(Math.random()*pool.length)]};
+}
+
+let tree = null;
+
+let selectedTier = null;
+
+let currentResult = null;
+
+let oneOfOnes = [];
+let outlinesEnabled = true;
+
+// ---- Persistence (IndexedDB) ----
+const DB_NAME = 'hoodstreet-gen';
+const DB_VERSION = 1;
+const STORE = 'kv';
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => { req.result.createObjectStore(STORE); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbSet(key, value) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function idbGet(key) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const req = tx.objectStore(STORE).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbDelete(key) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function idbClearAll() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function saveTraitState() {
+  try {
+    await idbSet('tree', tree);
+    await idbSet('oneOfOnes', oneOfOnes);
+  } catch (err) { console.error('Failed to save trait state', err); }
+}
+async function savePlanState() {
+  try {
+    await idbSet('collectionPlan', collectionPlan.map(x => x.kind === '1of1'
+      ? { id: x.id, kind: '1of1', name: x.name }
+      : { id: x.id, kind: 'trait', traits: x.traits }));
+    await idbSet('exportCursor', exportCursor);
+  } catch (err) { console.error('Failed to save plan state', err); }
+}
+async function clearPlanState() {
+  try { await idbDelete('collectionPlan'); await idbDelete('exportCursor'); } catch (err) { console.error(err); }
+}
+function findTraitEntry(layer, rarity, name) {
+  const rarityMap = tree && tree[layer];
+  const pool = rarityMap && rarityMap[rarity];
+  if (!pool) return null;
+  return pool.find(e => e.name === name) || null;
+}
+function hydratePlan(reducedPlan) {
+  return reducedPlan.map(item => {
+    if (item.kind === '1of1') {
+      const oo = oneOfOnes.find(o => o.name === item.name);
+      return { id: item.id, kind: '1of1', name: item.name, blob: oo ? oo.blob : null };
+    }
+    return {
+      id: item.id,
+      kind: 'trait',
+      traits: item.traits,
+      renderTraits: item.traits.map(t => ({ layer: t.layer, rarity: t.rarity, name: t.name, entry: findTraitEntry(t.layer, t.rarity, t.name) })).filter(t => t.entry)
+    };
+  });
+}
+function scatterOneOfOnes(traitPlan, totalSlots) {
+  const positions = Array.from({ length: totalSlots }, (_, i) => i);
+  for (let i = positions.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [positions[i], positions[j]] = [positions[j], positions[i]];
+  }
+  const ooCount = Math.min(oneOfOnes.length, totalSlots);
+  const ooPositions = new Set(positions.slice(0, ooCount));
+  const full = new Array(totalSlots);
+  let traitIdx = 0, ooIdx = 0;
+  for (let pos = 0; pos < totalSlots; pos++) {
+    const id = pos + 1;
+    if (ooPositions.has(pos) && ooIdx < oneOfOnes.length) {
+      const oo = oneOfOnes[ooIdx++];
+      full[pos] = { id, kind: '1of1', name: oo.name, blob: oo.blob };
+    } else if (traitIdx < traitPlan.length) {
+      const t = traitPlan[traitIdx++];
+      full[pos] = { id, kind: 'trait', traits: t.traits, renderTraits: t.renderTraits };
+    } else if (ooIdx < oneOfOnes.length) {
+      const oo = oneOfOnes[ooIdx++];
+      full[pos] = { id, kind: '1of1', name: oo.name, blob: oo.blob };
+    }
+  }
+  return full.filter(Boolean);
+}
+
+// Shared pause/stop control for long-running build & export loops.
+const opControl = { paused: false, stopped: false };
+function resetOpControl() { opControl.paused = false; opControl.stopped = false; pauseBuildBtnText(); }
+function pauseBuildBtnText() { if (typeof pauseBuildBtn !== 'undefined' && pauseBuildBtn) pauseBuildBtn.textContent = 'Pause'; }
+async function waitWhilePaused() {
+  while (opControl.paused && !opControl.stopped) { await new Promise(r => setTimeout(r, 150)); }
+}
+function nextFrame() {
+  return new Promise(r => requestAnimationFrame(() => r()));
+}
+
+
+
+function isOneOfOnePath(path) {
+
+  // Matches folder/file names like "1of1s", "1 of 1", "1-of-1s", "1/1s" etc.
+
+  return /1[\s\-_]*of[\s\-_]*1/i.test(path);
+
+}
+
+
+
+function parsePath(path) {
+
+  const clean = path.replace(/^\/+/, "");
+
+  const parts = clean.split("/").filter(Boolean);
+
+  const filename = parts[parts.length - 1];
+
+  if (!/\.(png|jpe?g)$/i.test(filename)) return null;
+
+
+
+  if (parts.length >= 2) {
+
+    for (let i = parts.length - 2; i >= 0; i--) {
+
+      if (LAYER_ORDER.includes(parts[i])) {
+
+        const layer = parts[i];
+
+        const rest = parts.slice(i + 1);
+
+        if (rest.length === 2 && RARITY_TIERS.includes(rest[0])) {
+
+          return { layer, rarity: rest[0], name: rest[1].replace(/\.(png|jpe?g)$/i, "") };
+
+        }
+
+        if (rest.length === 1) {
+
+          return { layer, rarity: "Common", name: rest[0].replace(/\.(png|jpe?g)$/i, "") };
+
+        }
+
+      }
+
+    }
+
+  }
+
+
+
+  const base = filename.replace(/\.(png|jpe?g)$/i, "");
+
+  const bits = base.split("_");
+
+  if (bits.length >= 3) {
+
+    const layer = bits[0].replace(/-/g, " ");
+
+    const rarity = bits[1];
+
+    if (LAYER_ORDER.includes(layer) && RARITY_TIERS.includes(rarity)) {
+
+      return { layer, rarity, name: bits.slice(2).join("_") };
+
+    }
+
+  }
+
+  return null;
+
+}
+
+
+
+const fileInput = document.getElementById('fileInput');
+
+const uploadBtn = document.getElementById('uploadBtn');
+
+const errorMsg = document.getElementById('errorMsg');
+
+const uploadScreen = document.getElementById('uploadScreen');
+
+const mainScreen = document.getElementById('mainScreen');
+
+const layerCount = document.getElementById('layerCount');
+
+const tierButtons = document.getElementById('tierButtons');
+
+const canvasBox = document.getElementById('canvasBox');
+
+const hiddenCanvas = document.getElementById('hiddenCanvas');
+
+const resultActions = document.getElementById('resultActions');
+
+const traitsList = document.getElementById('traitsList');
+
+const downloadBtn = document.getElementById('downloadBtn');
+
+const changeFilesBtn = document.getElementById('changeFilesBtn');
+
+const randomBtn = document.getElementById('randomBtn');
+
+const oneOfOneBtn = document.getElementById('oneOfOneBtn');
+const buildCollectionBtn = document.getElementById('buildCollectionBtn');
+const collectionTools = document.getElementById('collectionTools');
+const collectionStatus = document.getElementById('collectionStatus');
+const buildMonitor = document.getElementById('buildMonitor');
+const buildPreviewBox = document.getElementById('buildPreviewBox');
+const buildPreviewImg = document.getElementById('buildPreviewImg');
+const buildProgressBar = document.getElementById('buildProgressBar');
+const buildLiveStatus = document.getElementById('buildLiveStatus');
+const buildLiveStats = document.getElementById('buildLiveStats');
+const imageBaseUri = document.getElementById('imageBaseUri');
+const downloadDataBtn = document.getElementById('downloadDataBtn');
+const downloadCsvBtn = document.getElementById('downloadCsvBtn');
+const exportBatchBtn = document.getElementById('exportBatchBtn');
+const exportBatchSize = document.getElementById('exportBatchSize');
+const pauseBuildBtn = document.getElementById('pauseBuildBtn');
+const stopBuildBtn = document.getElementById('stopBuildBtn');
+const deletePlanBtn = document.getElementById('deletePlanBtn');
+const supplyConfig = document.getElementById('supplyConfig');
+const supplyPresets = document.getElementById('supplyPresets');
+const customSupply = document.getElementById('customSupply');
+const metadataTemplate = document.getElementById('metadataTemplate');
+const collectionName = document.getElementById('collectionName');
+const collectionSymbol = document.getElementById('collectionSymbol');
+const collectionDesc = document.getElementById('collectionDesc');
+const externalUrlBase = document.getElementById('externalUrlBase');
+const includeBodyAttr = document.getElementById('includeBodyAttr');
+const exportAllBtn = document.getElementById('exportAllBtn');
+let collectionPlan = [];
+let exportCursor = 0;
+const SUPPLY_PRESETS = [4444, 5555, 6000, 10000];
+let selectedSupply = SUPPLY_PRESETS[0];
+function currentSupply() {
+  const v = Math.floor(+customSupply.value);
+  if (v && v > 0) return Math.min(v, 200000);
+  return selectedSupply;
+}
+function buildTargetCount() {
+  return Math.max(1, currentSupply() - oneOfOnes.length);
+}
+function setupSupplyPresets() {
+  supplyPresets.innerHTML = '';
+  SUPPLY_PRESETS.forEach(v => {
+    const btn = document.createElement('button');
+    btn.textContent = v.toLocaleString();
+    btn.classList.toggle('active', v === selectedSupply && !customSupply.value);
+    btn.addEventListener('click', () => {
+      selectedSupply = v;
+      customSupply.value = '';
+      [...supplyPresets.children].forEach(b => b.classList.toggle('active', b === btn));
+      updateBuildButtonLabel();
+    });
+    supplyPresets.appendChild(btn);
+  });
+}
+function updateBuildButtonLabel() {
+  buildCollectionBtn.textContent = (collectionPlan.length ? 'Rebuild ' : 'Build ') + currentSupply().toLocaleString() + ' Plan';
+}
+customSupply.addEventListener('input', () => {
+  if (customSupply.value) { [...supplyPresets.children].forEach(b => b.classList.remove('active')); }
+  else { [...supplyPresets.children].forEach(b => b.classList.toggle('active', b.textContent === selectedSupply.toLocaleString())); }
+  updateBuildButtonLabel();
+});
+
+pauseBuildBtn.addEventListener('click', () => {
+  opControl.paused = !opControl.paused;
+  pauseBuildBtn.textContent = opControl.paused ? 'Resume' : 'Pause';
+});
+stopBuildBtn.addEventListener('click', () => {
+  opControl.stopped = true;
+  opControl.paused = false;
+  pauseBuildBtn.textContent = 'Pause';
+});
+deletePlanBtn.addEventListener('click', async () => {
+  if (!confirm('Delete the current collection plan? This cannot be undone.')) return;
+  opControl.stopped = true;
+  collectionPlan = []; exportCursor = 0;
+  collectionTools.style.display = 'none';
+  buildMonitor.style.display = 'none';
+  exportBatchBtn.disabled = false;
+  exportBatchBtn.textContent = 'Export Next ' + currentBatchSize() + ' JPGs';
+  exportAllBtn.disabled = false;
+  exportAllBtn.textContent = 'Export All (auto)';
+  updateBuildButtonLabel();
+  await clearPlanState();
+});
+
+const oneOfOneModal = document.getElementById('oneOfOneModal');
+
+const oneOfOneGrid = document.getElementById('oneOfOneGrid');
+
+const oneOfOneTitle = document.getElementById('oneOfOneTitle');
+
+const closeOneOfOneBtn = document.getElementById('closeOneOfOneBtn');
+
+
+
+uploadBtn.addEventListener('click', () => fileInput.click());
+
+
+
+fileInput.addEventListener('change', async (e) => {
+
+  errorMsg.style.display = 'none';
+
+  const zipFile = e.target.files[0];
+
+  if (!zipFile) return;
+
+
+
+  uploadBtn.disabled = true;
+
+  uploadBtn.textContent = 'Reading zip';
+
+
+
+  try {
+
+    const zip = await JSZip.loadAsync(zipFile);
+
+    const newTree = {};
+
+    const newOneOfOnes = [];
+
+    let matched = 0;
+
+    const entries = Object.values(zip.files).filter(z => !z.dir);
+
+
+
+    for (const entry of entries) {
+
+      if (!/\.(png|jpe?g)$/i.test(entry.name)) continue;
+
+
+
+      if (isOneOfOnePath(entry.name)) {
+
+        const blob = await entry.async('blob');
+
+        const filename = entry.name.split('/').filter(Boolean).pop();
+
+        const name = filename.replace(/\.(png|jpe?g)$/i, "");
+
+        newOneOfOnes.push({ blob, name });
+
+        matched++;
+
+        continue;
+
+      }
+
+
+
+      const parsed = parsePath(entry.name);
+
+      if (!parsed) continue;
+
+      const blob = await entry.async('blob');
+
+      matched++;
+
+      const { layer, rarity, name } = parsed;
+
+      newTree[layer] = newTree[layer] || {};
+
+      newTree[layer][rarity] = newTree[layer][rarity] || [];
+
+      newTree[layer][rarity].push({ blob, name });
+
+    }
+
+
+
+    if (matched === 0) {
+
+      errorMsg.textContent = 'No matching PNGs found in the zip. Use folders Layer/Rarity/Name.png, or flat files named "Layer_Rarity_Name.png".';
+
+      errorMsg.style.display = 'block';
+
+    } else {
+
+      tree = newTree;
+
+      oneOfOnes = newOneOfOnes;
+
+      collectionPlan = []; exportCursor = 0;
+      collectionTools.style.display = 'none';
+      buildMonitor.style.display = 'none';
+      await clearPlanState();
+      await saveTraitState();
+
+      showMainScreen();
+
+    }
+
+  } catch (err) {
+
+    errorMsg.textContent = "Couldn't read zip: " + err.message;
+
+    errorMsg.style.display = 'block';
+
+  } finally {
+
+    uploadBtn.disabled = false;
+
+    uploadBtn.textContent = 'Upload Zip';
+
+  }
+
+});
+
+
+
+changeFilesBtn.addEventListener('click', async () => {
+
+  if (!confirm('Change zip? This clears your saved traits and any collection plan.')) return;
+
+  opControl.stopped = true;
+
+  tree = null;
+
+  oneOfOnes = [];
+
+  currentResult = null;
+
+  selectedTier = null;
+
+  collectionPlan = [];
+
+  exportCursor = 0;
+
+  fileInput.value = '';
+
+  mainScreen.style.display = 'none';
+
+  uploadScreen.style.display = 'block';
+
+  collectionTools.style.display = 'none';
+
+  buildMonitor.style.display = 'none';
+
+  await idbClearAll();
+
+});
+
+
+
+function showMainScreen() {
+
+  uploadScreen.style.display = 'none';
+
+  mainScreen.style.display = 'block';
+
+  layerCount.textContent = Object.keys(tree).length + ' LAYERS LOADED';
+
+
+
+  tierButtons.innerHTML = '';
+
+  RARITY_TIERS.forEach(tier => {
+
+    const btn = document.createElement('button');
+
+    btn.textContent = tier;
+
+    btn.addEventListener('click', () => generate(tier));
+
+    tierButtons.appendChild(btn);
+
+  });
+
+  resultActions.style.display = 'none';
+
+  canvasBox.innerHTML = '<span>generate a Lad</span>';
+
+  oneOfOneBtn.textContent = oneOfOnes.length ? `1/1s (${oneOfOnes.length})` : '1/1s';
+
+  supplyConfig.style.display = 'block';
+  setupSupplyPresets();
+  updateBuildButtonLabel();
+
+}
+
+
+
+async function generate(tier) {
+
+  if (!tree) return;
+
+  selectedTier = tier;
+
+  [...tierButtons.children].forEach(b => {
+
+    b.classList.toggle('active', b.textContent === tier);
+
+    b.disabled = true;
+
+  });
+
+  canvasBox.innerHTML = '<span>compositing</span>';
+
+  resultActions.style.display = 'none';
+
+
+
+  try {
+
+    const ctx = hiddenCanvas.getContext('2d');
+
+    hiddenCanvas.width = 1254;
+
+    hiddenCanvas.height = 1254;
+
+    ctx.clearRect(0, 0, hiddenCanvas.width, hiddenCanvas.height);
+
+
+
+    const chosenTraits = [];
+
+
+
+      const oP = +document.getElementById('outlineOutside').value || 0;
+    const iP = +document.getElementById('outlineInside').value || 0;
+    const useOL = outlinesEnabled && (oP || iP);
+
+    for (const layer of LAYER_ORDER) {
+
+      const rarityMap = tree[layer];
+
+      if (!rarityMap) continue;
+
+
+
+      // Strict: use the selected tier exactly. Only fall back to the
+
+      // nearest available tier if this layer has no assets at that tier.
+
+      let rarity = tier;
+
+      if (!rarityMap[rarity]) {
+
+        const availableTiers = Object.keys(rarityMap);
+
+        const tierIdx = RARITY_TIERS.indexOf(tier);
+
+        availableTiers.sort((a, b) =>
+
+          Math.abs(RARITY_TIERS.indexOf(a) - tierIdx) - Math.abs(RARITY_TIERS.indexOf(b) - tierIdx)
+
+        );
+
+        rarity = availableTiers[0];
+
+      }
+
+
+
+      const pool = rarityMap[rarity];
+
+      const entry = pool[Math.floor(Math.random() * pool.length)];
+
+
+
+      let bitmap = await createImageBitmap(entry.blob);
+      if (useOL) { const ol = await applyOutline(entry.blob, oP, iP); bitmap.close?.(); bitmap = await createImageBitmap(ol); }
+
+      ctx.drawImage(bitmap, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
+
+
+
+      chosenTraits.push({ layer, rarity, name: entry.name });
+
+    }
+
+
+
+    const imgUrl = hiddenCanvas.toDataURL('image/png');
+
+    currentResult = { traits: chosenTraits, imgUrl };
+
+
+
+    canvasBox.innerHTML = '';
+
+    const img = document.createElement('img');
+
+    img.src = imgUrl;
+
+    canvasBox.appendChild(img);
+
+
+
+    traitsList.innerHTML = '';
+
+    chosenTraits.forEach(t => {
+
+      const row = document.createElement('div');
+
+      row.className = 'trait-row';
+
+      row.innerHTML = `<span class="layer">${t.layer}</span><span>${t.name}</span><span class="rarity">${t.rarity}</span>`;
+
+      traitsList.appendChild(row);
+
+    });
+
+    resultActions.style.display = 'block';
+
+  } catch (err) {
+
+    canvasBox.innerHTML = `<span style="color:#241f18;font-weight:700;">Generation failed: ${err.message}</span>`;
+
+  } finally {
+
+    [...tierButtons.children].forEach(b => b.disabled = false);
+
+  }
+
+}
+
+
+
+downloadBtn.addEventListener('click', () => {
+
+  if (!currentResult) return;
+
+  const a = document.createElement('a');
+
+  a.href = currentResult.imgUrl;
+
+  a.download = `hoodstreet-${Date.now()}.png`;
+
+  a.click();
+
+});
+
+
+
+// ---- Edit Traits Modal ----
+const editTraitsBtn = document.getElementById('editTraitsBtn');
+const editTraitsModal = document.getElementById('editTraitsModal');
+const closeEditTraitsBtn = document.getElementById('closeEditTraitsBtn');
+const editLayer = document.getElementById('editLayer');
+const editTrait = document.getElementById('editTrait');
+const editOutlineEnabled = document.getElementById('editOutlineEnabled');
+const editPreviewOriginal = document.getElementById('editPreviewOriginal');
+const editPreviewOutline = document.getElementById('editPreviewOutline');
+const outsideVal = document.getElementById('outsideVal');
+const insideVal = document.getElementById('insideVal');
+const outlineOutsideInput = document.getElementById('outlineOutside');
+const outlineInsideInput = document.getElementById('outlineInside');
+
+function populateEditTraits() {
+  if (!tree) return;
+  const layers = LAYER_ORDER.filter(l => tree[l]);
+  editLayer.innerHTML = layers.map(l => '<option value="' + l + '">' + l + '</option>').join('');
+  populateEditTraitList();
+}
+function populateEditTraitList() {
+  const list = flatTraitList(editLayer.value);
+  editTrait.innerHTML = list.map((t, i) => '<option value="' + i + '">' + t.rarity + ' / ' + t.entry.name + '</option>').join('');
+}
+
+let editPreviewTimer = null;
+async function renderEditPreview() {
+  const list = flatTraitList(editLayer.value);
+  const pick = list[+editTrait.value];
+  if (!pick) {
+    editPreviewOriginal.innerHTML = '<span>no trait</span>';
+    editPreviewOutline.innerHTML = '<span>no trait</span>';
+    return;
+  }
+  const oP = +outlineOutsideInput.value || 0;
+  const iP = +outlineInsideInput.value || 0;
+  const enabled = editOutlineEnabled.checked;
+  // Original preview
+  const bmp1 = await createImageBitmap(pick.entry.blob);
+  const c1 = document.createElement('canvas'); c1.width = 1254; c1.height = 1254;
+  const ctx1 = c1.getContext('2d');
+  paintPreviewBg(ctx1, 1254, 1254);
+  ctx1.drawImage(bmp1, 0, 0, 1254, 1254); bmp1.close?.();
+  editPreviewOriginal.innerHTML = '';
+  const img1 = document.createElement('img'); img1.src = c1.toDataURL('image/png');
+  editPreviewOriginal.appendChild(img1);
+  // Outline preview
+  editPreviewOutline.innerHTML = '<span>computing...</span>';
+  if (enabled && (oP || iP)) {
+    const olBlob = await applyOutline(pick.entry.blob, oP, iP);
+    const bmp2 = await createImageBitmap(olBlob);
+    const c2 = document.createElement('canvas'); c2.width = 1254; c2.height = 1254;
+    const ctx2 = c2.getContext('2d');
+    paintPreviewBg(ctx2, 1254, 1254);
+    ctx2.drawImage(bmp2, 0, 0, 1254, 1254); bmp2.close?.();
+    editPreviewOutline.innerHTML = '';
+    const img2 = document.createElement('img'); img2.src = c2.toDataURL('image/png');
+    editPreviewOutline.appendChild(img2);
+  } else {
+    editPreviewOutline.innerHTML = '';
+    const img2 = document.createElement('img'); img2.src = c1.toDataURL('image/png');
+    editPreviewOutline.appendChild(img2);
+  }
+}
+
+function debouncedEditPreview() {
+  if (editPreviewTimer) clearTimeout(editPreviewTimer);
+  editPreviewTimer = setTimeout(renderEditPreview, 300);
+}
+
+editTraitsBtn.addEventListener('click', () => {
+  if (!tree) return;
+  populateEditTraits();
+  editTraitsModal.classList.add('open');
+  renderEditPreview();
+});
+closeEditTraitsBtn.addEventListener('click', () => {
+  editTraitsModal.classList.remove('open');
+});
+editLayer.addEventListener('change', () => { populateEditTraitList(); renderEditPreview(); });
+editTrait.addEventListener('change', renderEditPreview);
+editOutlineEnabled.addEventListener('change', () => {
+  outlinesEnabled = editOutlineEnabled.checked;
+  renderEditPreview();
+});
+outlineOutsideInput.addEventListener('input', () => { outsideVal.textContent = outlineOutsideInput.value; debouncedEditPreview(); });
+outlineInsideInput.addEventListener('input', () => { insideVal.textContent = outlineInsideInput.value; debouncedEditPreview(); });
+
+let editBgMode = 'white';
+const checkerPattern = (() => {
+  const c = document.createElement('canvas'); c.width = 20; c.height = 20;
+  const x = c.getContext('2d');
+  x.fillStyle = '#ccc'; x.fillRect(0, 0, 20, 20);
+  x.fillStyle = '#999'; x.fillRect(0, 0, 10, 10); x.fillRect(10, 10, 10, 10);
+  return c;
+})();
+document.getElementById('editBgButtons').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-bg]');
+  if (!btn) return;
+  document.querySelectorAll('#editBgButtons button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  editBgMode = btn.dataset.bg;
+  renderEditPreview();
+});
+
+function paintPreviewBg(ctx, w, h) {
+  if (editBgMode === 'black') {
+    ctx.fillStyle = '#000';
+  } else if (editBgMode === 'checker') {
+    ctx.fillStyle = ctx.createPattern(checkerPattern, 'repeat');
+  } else {
+    ctx.fillStyle = '#ffffff';
+  }
+  ctx.fillRect(0, 0, w, h);
+}
+
+randomBtn.addEventListener('click', () => {
+
+  generateChaos();
+
+});
+
+
+
+async function generateChaos() {
+  if (!tree) return; randomBtn.disabled=true; canvasBox.innerHTML='<span>compositing</span>'; resultActions.style.display='none';
+  try {
+    const ctx=hiddenCanvas.getContext('2d'); hiddenCanvas.width=1254; hiddenCanvas.height=1254; ctx.clearRect(0,0,1254,1254);
+    const chosenTraits=[];
+    const oP = +document.getElementById('outlineOutside').value || 0;
+    const iP = +document.getElementById('outlineInside').value || 0;
+    const useOL = outlinesEnabled && (oP || iP);
+    for (const layer of LAYER_ORDER) {
+      const rarityMap=tree[layer]; if(!rarityMap) continue; let picked=null;
+      if(layer==='Body'){ picked=pickAnyTrait(rarityMap); }
+      else if(Object.prototype.hasOwnProperty.call(OPTIONAL_CHANCE,layer)){ if(Math.random()>=OPTIONAL_CHANCE[layer]) continue; picked=pickWeightedTrait(rarityMap); }
+      else picked=pickWeightedTrait(rarityMap);
+      if(!picked) continue; const {rarity,entry}=picked; let bitmap=await createImageBitmap(entry.blob); if(useOL){const ol=await applyOutline(entry.blob,oP,iP);bitmap.close?.();bitmap=await createImageBitmap(ol);} ctx.drawImage(bitmap,0,0,1254,1254); chosenTraits.push({layer,rarity,name:entry.name});
+    }
+    const imgUrl=hiddenCanvas.toDataURL('image/png'); currentResult={traits:chosenTraits,imgUrl}; canvasBox.innerHTML=''; const img=document.createElement('img'); img.src=imgUrl; canvasBox.appendChild(img);
+    traitsList.innerHTML=''; chosenTraits.forEach(t=>{const row=document.createElement('div');row.className='trait-row';row.innerHTML=`<span class="layer">${t.layer}</span><span>${t.name}</span><span class="rarity">${t.rarity}</span>`;traitsList.appendChild(row);}); resultActions.style.display='block';
+  } catch(err){canvasBox.innerHTML=`<span style="color:#241f18;font-weight:700;">Generation failed: ${err.message}</span>`;} finally {randomBtn.disabled=false;}
+}
+
+
+
+
+function chooseProductionTraits() {
+  const chosen=[];
+  for (const layer of LAYER_ORDER) {
+    const rarityMap=tree[layer];
+    if(!rarityMap) continue;
+    let picked=null;
+    if(layer === 'Body') picked=pickAnyTrait(rarityMap);
+    else if(Object.prototype.hasOwnProperty.call(OPTIONAL_CHANCE,layer)) {
+      if(Math.random() >= OPTIONAL_CHANCE[layer]) continue;
+      picked=pickWeightedTrait(rarityMap);
+    } else picked=pickWeightedTrait(rarityMap);
+    if(!picked || /^none$/i.test(picked.entry.name)) continue;
+    chosen.push({layer, rarity:picked.rarity, name:picked.entry.name, entry:picked.entry});
+  }
+  return chosen;
+}
+
+function comboKey(traits){
+  return traits.map(t=>`${t.layer}:${t.name}`).join('|');
+}
+
+function publicTraits(traits){
+  return traits.map(({layer,rarity,name})=>({layer,rarity,name}));
+}
+
+function buildStats(plan){
+  const stats={total:plan.length, traits:{}, traitCounts:{}, oneOfOneCount:0};
+  for(const item of plan){
+    if(item.kind==='1of1'){ stats.oneOfOneCount++; continue; }
+    stats.traitCounts[item.traits.length]=(stats.traitCounts[item.traits.length]||0)+1;
+    for(const t of item.traits){
+      stats.traits[t.layer]=stats.traits[t.layer]||{};
+      stats.traits[t.layer][t.name]=(stats.traits[t.layer][t.name]||0)+1;
+    }
+  }
+  const rows=[];
+  for(const [layer,vals] of Object.entries(stats.traits)){
+    for(const [name,count] of Object.entries(vals)) rows.push({layer,name,count,percent:+(count/plan.length*100).toFixed(4)});
+  }
+  rows.sort((a,b)=>a.layer.localeCompare(b.layer)||a.count-b.count||a.name.localeCompare(b.name));
+  return {summary:stats, rows};
+}
+
+function metadataFor(item){
+  const base=imageBaseUri.value.replace(/\/$/,'');
+  const name=(collectionName.value||'HoodStreet').trim();
+  const desc=(collectionDesc.value||'').trim();
+  const sym=(collectionSymbol.value||'').trim();
+  const extBase=(externalUrlBase.value||'').trim().replace(/\/$/,'');
+  const template=metadataTemplate.value;
+  const attrs=item.kind==='1of1'
+    ? [{trait_type:'Type',value:'1 of 1'},{trait_type:'Edition Name',value:item.name}]
+    : item.traits.filter(t=>includeBodyAttr.checked?true:t.layer!=='Body').map(t=>({trait_type:t.layer,value:t.name}));
+  const md={
+    name:`${name} #${item.id}`,
+    description:desc,
+    image:`${base}/${item.id}.jpg`,
+    attributes:attrs
+  };
+  if(template==='minimal'){
+    delete md.description;
+  }
+  if(template==='opensea'){
+    if(extBase) md.external_url=`${extBase}/${item.id}`;
+  }
+  if(template==='verbose'){
+    if(sym) md.symbol=sym;
+    md.collection=name;
+    md.edition=item.id;
+    if(extBase) md.external_url=`${extBase}/${item.id}`;
+  }
+  return md;
+}
+
+buildCollectionBtn.addEventListener('click', async()=>{
+  if(!tree) return;
+  const totalSupply = currentSupply();
+  if(oneOfOnes.length > totalSupply){
+    alert(`You have ${oneOfOnes.length} 1/1s but the total supply is only set to ${totalSupply}. Raise the supply or remove some 1/1s.`);
+    return;
+  }
+  resetOpControl();
+  buildCollectionBtn.disabled=true;
+  buildCollectionBtn.textContent='Building plan';
+  buildMonitor.style.display='block';
+  buildProgressBar.style.width='0%';
+  buildLiveStatus.textContent='Starting collection plan';
+  buildLiveStats.textContent='Unique: 0  Duplicates skipped: 0  Attempts: 0';
+  await new Promise(r=>setTimeout(r,20));
+  const seen=new Set(); const traitPlan=[]; let attempts=0; let duplicates=0; const target=buildTargetCount(); const maxAttempts=target*200;
+  let wasStopped=false;
+  while(traitPlan.length<target && attempts<maxAttempts){
+    if(opControl.stopped){ wasStopped=true; break; }
+    await waitWhilePaused();
+    if(opControl.stopped){ wasStopped=true; break; }
+    attempts++;
+    const traits=chooseProductionTraits();
+    const key=comboKey(traits);
+    if(seen.has(key)){ duplicates++; continue; }
+    seen.add(key);
+    traitPlan.push({traits:publicTraits(traits), renderTraits:traits});
+    if(traitPlan.length%25===0 || traitPlan.length===target){
+      const pct=(traitPlan.length/target*100);
+      buildProgressBar.style.width=`${pct}%`;
+      buildLiveStatus.textContent=`Planning Lad ${traitPlan.length.toLocaleString()} of ${target.toLocaleString()}  ${pct.toFixed(1)}%`;
+      buildLiveStats.textContent=`Unique: ${traitPlan.length.toLocaleString()}  Duplicates skipped: ${duplicates.toLocaleString()}  Attempts: ${attempts.toLocaleString()}`;
+      await nextFrame();
+    }
+  }
+  if(!wasStopped && traitPlan.length<target){ alert(`Could only create ${traitPlan.length} unique combinations. Add traits or loosen constraints.`); }
+  const finalTotal = wasStopped ? (traitPlan.length + oneOfOnes.length) : totalSupply;
+  const plan = scatterOneOfOnes(traitPlan, finalTotal);
+  collectionPlan=plan; exportCursor=0;
+  if(plan.length){
+    collectionTools.style.display='block';
+    collectionStatus.textContent=wasStopped
+      ? `Stopped early: ${traitPlan.length.toLocaleString()} unique Lads planned so far, plus ${oneOfOnes.length.toLocaleString()} 1/1${oneOfOnes.length===1?'':'s'} scattered in for ${plan.length.toLocaleString()} total. You can export what's planned or rebuild.`
+      : `${plan.length.toLocaleString()} total planned  ${traitPlan.length.toLocaleString()} generated + ${oneOfOnes.length.toLocaleString()} 1/1${oneOfOnes.length===1?'':'s'} scattered randomly through the supply. Export images in batches, or use Export All.`;
+    await savePlanState();
+  }
+  buildProgressBar.style.width=`${Math.min(100,traitPlan.length/target*100)}%`;
+  buildLiveStatus.textContent=wasStopped?`Stopped at ${traitPlan.length.toLocaleString()} unique Lads`:(traitPlan.length===target?'Plan complete ':`Stopped at ${traitPlan.length.toLocaleString()} unique Lads`);
+  buildLiveStats.textContent=`Unique: ${traitPlan.length.toLocaleString()}  Duplicates skipped: ${duplicates.toLocaleString()}  Attempts: ${attempts.toLocaleString()}`;
+  exportBatchBtn.textContent=`Export Next ${Math.min(currentBatchSize(),plan.length)} JPGs`;
+  buildCollectionBtn.disabled=false; updateBuildButtonLabel();
+  exportAllBtn.disabled=false; exportAllBtn.textContent='Export All (auto)';
+});
+
+downloadDataBtn.addEventListener('click', async()=>{
+  if(!collectionPlan.length) return;
+  const zip=new JSZip(); const md=zip.folder('metadata');
+  for(const item of collectionPlan) md.file(`${item.id}.json`,JSON.stringify(metadataFor(item),null,2));
+  const {summary,rows}=buildStats(collectionPlan);
+  zip.file('collection-plan.json',JSON.stringify(collectionPlan.map(x=>x.kind==='1of1'?{id:x.id,kind:'1of1',name:x.name}:{id:x.id,kind:'trait',traits:x.traits}),null,2));
+  zip.file('rarity-stats.json',JSON.stringify({summary,rows},null,2));
+  const csv=['Layer,Trait,Count,Percent',...rows.map(r=>[r.layer,r.name,r.count,r.percent].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(','))].join('\n');
+  zip.file('rarity-stats.csv',csv);
+  const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='hoodstreet-metadata-stats.zip'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),10000);
+});
+
+downloadCsvBtn.addEventListener('click', () => {
+  if(!collectionPlan.length) return;
+  const name=(collectionName.value||'HoodStreet').trim();
+  const desc=(collectionDesc.value||'').trim();
+  const traitTypesOrdered=[];
+  const traitTypesSeen=new Set();
+  collectionPlan.forEach(item=>{
+    if(item.kind==='1of1'){
+      if(!traitTypesSeen.has('Type')){traitTypesSeen.add('Type');traitTypesOrdered.push('Type');}
+      if(!traitTypesSeen.has('Edition Name')){traitTypesSeen.add('Edition Name');traitTypesOrdered.push('Edition Name');}
+    } else {
+      item.traits.forEach(t=>{
+        if(!includeBodyAttr.checked && t.layer==='Body') return;
+        if(!traitTypesSeen.has(t.layer)){traitTypesSeen.add(t.layer);traitTypesOrdered.push(t.layer);}
+      });
+    }
+  });
+  const header=['Filename','Name','Description',...traitTypesOrdered];
+  const lines=[header];
+  collectionPlan.forEach(item=>{
+    const filename=`${item.id}.jpg`;
+    const itemName=`${name} #${item.id}`;
+    const rowMap={};
+    if(item.kind==='1of1'){
+      rowMap['Type']='1 of 1';
+      rowMap['Edition Name']=item.name;
+    } else {
+      item.traits.forEach(t=>{
+        if(!includeBodyAttr.checked && t.layer==='Body') return;
+        rowMap[t.layer]=t.name;
+      });
+    }
+    lines.push([filename,itemName,desc,...traitTypesOrdered.map(tt=>rowMap[tt]||'')]);
+  });
+  const csv=lines.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='opensea-metadata.csv'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),10000);
+});
+
+async function applyOutline(blob, outsidePx, insidePx) {
+  if (!outsidePx && !insidePx) return blob;
+  const maxR = Math.max(outsidePx, insidePx);
+  const ex = maxR * 2;
+  const sz = 1254 + ex * 2;
+  const c = document.createElement('canvas');
+  c.width = sz; c.height = sz;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  const bmp = await createImageBitmap(blob);
+  ctx.drawImage(bmp, ex, ex, 1254, 1254);
+  bmp.close?.();
+  const img = ctx.getImageData(0, 0, sz, sz);
+  const w = sz, h = sz, TH = 10;
+  // Build binary mask: 1 = opaque pixel, 0 = transparent
+  const mask = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    mask[i] = img.data[i * 4 + 3] > TH ? 1 : 0;
+  }
+  // BFS distance transform from transparent boundary into opaque region
+  // (how far each opaque pixel is from the nearest transparent pixel)
+  const INF = 9999;
+  const dist = new Int32Array(w * h);
+  const q = [];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = y * w + x;
+      if (mask[o] === 0) {
+        dist[o] = 0;
+        q.push(o);
+      } else {
+        dist[o] = INF;
+      }
+    }
+  }
+  // BFS with 8-connectivity for inside distance
+  const dirs8 = [-1,0,1];
+  let qi = 0;
+  while (qi < q.length) {
+    const pos = q[qi++];
+    const px = pos % w, py = (pos / w) | 0;
+    for (const dy of dirs8) {
+      for (const dx of dirs8) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = px + dx, ny = py + dy;
+        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+        const n = ny * w + nx;
+        if (mask[n] === 1 && dist[n] === INF) {
+          dist[n] = dist[pos] + 1;
+          q.push(n);
+        }
+      }
+    }
+  }
+  // BFS from opaque boundary into transparent region (outside distance)
+  const distOut = new Int32Array(w * h);
+  const q2 = [];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = y * w + x;
+      if (mask[o] === 1) {
+        distOut[o] = 0;
+        q2.push(o);
+      } else {
+        distOut[o] = INF;
+      }
+    }
+  }
+  qi = 0;
+  while (qi < q2.length) {
+    const pos = q2[qi++];
+    const px = pos % w, py = (pos / w) | 0;
+    for (const dy of dirs8) {
+      for (const dx of dirs8) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = px + dx, ny = py + dy;
+        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+        const n = ny * w + nx;
+        if (mask[n] === 0 && distOut[n] === INF) {
+          distOut[n] = distOut[pos] + 1;
+          q2.push(n);
+        }
+      }
+    }
+  }
+  // Paint outline pixels
+  const dt = img.data;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = y * w + x;
+      const insideHit = mask[o] === 1 && dist[o] > 0 && dist[o] <= insidePx;
+      const outsideHit = mask[o] === 0 && distOut[o] > 0 && distOut[o] <= outsidePx;
+      if (insideHit || outsideHit) {
+        dt[o * 4] = 0; dt[o * 4 + 1] = 0; dt[o * 4 + 2] = 0; dt[o * 4 + 3] = 255;
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return await new Promise(r => c.toBlob(r, 'image/png'));
+}
+
+async function renderPlannedItem(item){
+  const c=document.createElement('canvas'); c.width=1254; c.height=1254; const ctx=c.getContext('2d');
+  ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,c.width,c.height);
+  const oP=+document.getElementById('outlineOutside').value||0;
+  const iP=+document.getElementById('outlineInside').value||0;
+  const useOL=outlinesEnabled&&(oP||iP);
+  if(item.kind==='1of1'){
+    if(item.blob){ let bmp=await createImageBitmap(item.blob); if(useOL){const ol=await applyOutline(item.blob,oP,iP);bmp.close?.();bmp=await createImageBitmap(ol);}ctx.drawImage(bmp,0,0,c.width,c.height);bmp.close?.();}
+  } else {
+    for(const t of item.renderTraits){ let bmp=await createImageBitmap(t.entry.blob); if(useOL){const ol=await applyOutline(t.entry.blob,oP,iP);bmp.close?.();bmp=await createImageBitmap(ol);}ctx.drawImage(bmp,0,0,c.width,c.height);bmp.close?.();}
+  }
+  const dataUrl=c.toDataURL('image/jpeg',0.6);
+  const blob=await new Promise(resolve=>c.toBlob(resolve,'image/jpeg',0.92));
+  return {blob, dataUrl};
+}
+
+async function exportOneBatch(batchSize){
+  if(!collectionPlan.length || exportCursor>=collectionPlan.length) return {wasStopped:false, rendered:0};
+  const start=exportCursor, end=Math.min(start+batchSize,collectionPlan.length); const zip=new JSZip(); const folder=zip.folder('images');
+  buildPreviewBox.style.display='block'; buildMonitor.style.display='block';
+  let rendered=0; let wasStopped=false;
+  for(let i=start;i<end;i++){
+    if(opControl.stopped){ wasStopped=true; break; }
+    await waitWhilePaused();
+    if(opControl.stopped){ wasStopped=true; break; }
+    collectionStatus.textContent=`Rendering ${i+1} / ${collectionPlan.length.toLocaleString()}`;
+    const renderPct=((i+1)/collectionPlan.length*100); buildProgressBar.style.width=`${renderPct}%`;
+    buildLiveStatus.textContent=`Rendering JPG ${i+1} of ${collectionPlan.length.toLocaleString()}  ${renderPct.toFixed(1)}%`;
+    buildLiveStats.textContent=`Current export batch: ${start+1}-${end}`;
+    const {blob, dataUrl}=await renderPlannedItem(collectionPlan[i]); folder.file(`${collectionPlan[i].id}.jpg`,blob);
+    buildPreviewImg.src=dataUrl;
+    rendered++;
+    await nextFrame();
+  }
+  const actualEnd=start+rendered;
+  if(rendered>0){
+    const out=await zip.generateAsync({type:'blob',compression:'STORE'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(out); a.download=`hoodstreet-images-${start+1}-${actualEnd}.zip`; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),10000);
+  }
+  exportCursor=actualEnd;
+  await savePlanState();
+  collectionStatus.textContent=wasStopped
+    ? `Stopped: exported ${actualEnd.toLocaleString()} / ${collectionPlan.length.toLocaleString()} generated Lads so far.`
+    : `Exported ${actualEnd.toLocaleString()} / ${collectionPlan.length.toLocaleString()} generated Lads.`;
+  exportBatchBtn.textContent=exportCursor>=collectionPlan.length?'All JPGs Exported':`Export Next ${Math.min(currentBatchSize(),collectionPlan.length-exportCursor)} JPGs`;
+  return {wasStopped, rendered};
+}
+
+exportBatchBtn.addEventListener('click', async()=>{
+  if(!collectionPlan.length || exportCursor>=collectionPlan.length) return;
+  resetOpControl();
+  exportBatchBtn.disabled=true; buildCollectionBtn.disabled=true; exportAllBtn.disabled=true;
+  await exportOneBatch(currentBatchSize());
+  exportBatchBtn.disabled=exportCursor>=collectionPlan.length; buildCollectionBtn.disabled=false; exportAllBtn.disabled=exportCursor>=collectionPlan.length;
+});
+
+exportAllBtn.addEventListener('click', async()=>{
+  if(!collectionPlan.length || exportCursor>=collectionPlan.length) return;
+  resetOpControl();
+  exportBatchBtn.disabled=true; buildCollectionBtn.disabled=true; exportAllBtn.disabled=true; exportAllBtn.textContent='Exporting all\u2026';
+  while(exportCursor<collectionPlan.length){
+    const res = await exportOneBatch(currentBatchSize());
+    if(!res || res.wasStopped || opControl.stopped) break;
+    await new Promise(r=>setTimeout(r,300));
+  }
+  exportBatchBtn.disabled=exportCursor>=collectionPlan.length; buildCollectionBtn.disabled=false;
+  exportAllBtn.disabled=exportCursor>=collectionPlan.length; exportAllBtn.textContent='Export All (auto)';
+});
+
+exportBatchSize.addEventListener('input', () => {
+  if (!collectionPlan.length) return;
+  exportBatchBtn.textContent = exportCursor >= collectionPlan.length ? 'All JPGs Exported' : `Export Next ${Math.min(currentBatchSize(), collectionPlan.length - exportCursor)} JPGs`;
+});
+
+oneOfOneBtn.addEventListener('click', () => {
+
+  oneOfOneTitle.textContent = oneOfOnes.length ? `1/1s (${oneOfOnes.length})` : '1/1s';
+
+  oneOfOneGrid.innerHTML = '';
+
+
+
+  if (oneOfOnes.length === 0) {
+
+    oneOfOneGrid.innerHTML = '<div class="oneofone-empty">No 1/1s folder found in this zip. Add a "1of1s" folder with your 8 pieces to see them here.</div>';
+
+  } else {
+
+    oneOfOnes.forEach(item => {
+
+      const url = URL.createObjectURL(item.blob);
+
+      const cell = document.createElement('div');
+
+      cell.className = 'oneofone-item';
+
+      cell.innerHTML = `<img src="${url}"><div class="oo-name">${item.name}</div>`;
+
+      cell.addEventListener('click', () => {
+
+        const a = document.createElement('a');
+
+        a.href = url;
+
+        a.download = `${item.name}.png`;
+
+        a.click();
+
+      });
+
+      oneOfOneGrid.appendChild(cell);
+
+    });
+
+  }
+
+
+
+  oneOfOneModal.classList.add('open');
+
+});
+
+
+
+closeOneOfOneBtn.addEventListener('click', () => {
+
+  oneOfOneModal.classList.remove('open');
+
+});
+
+// ---- Align Check (onion-skin layer alignment viewer) ----
+const alignBtn = document.getElementById('alignBtn');
+const alignModal = document.getElementById('alignModal');
+const closeAlignBtn = document.getElementById('closeAlignBtn');
+const alignLayerA = document.getElementById('alignLayerA');
+const alignTraitA = document.getElementById('alignTraitA');
+const alignLayerB = document.getElementById('alignLayerB');
+const alignTraitB = document.getElementById('alignTraitB');
+const alignModeButtons = document.getElementById('alignModeButtons');
+const alignOpacity = document.getElementById('alignOpacity');
+const alignOpacityVal = document.getElementById('alignOpacityVal');
+const alignOpacityWrap = document.getElementById('alignOpacityWrap');
+const alignCanvasBox = document.getElementById('alignCanvasBox');
+
+let alignMode = 'normal';
+let alignOnionTimer = null;
+let alignOnionShowingA = true;
+const alignShowBodyOutline = document.getElementById('alignShowBodyOutline');
+const alignBodyRef = document.getElementById('alignBodyRef');
+let bodyOutlineCanvas = null;
+let bodyOutlineKey = null;
+
+function flatTraitList(layer) {
+  const rarityMap = tree && tree[layer];
+  if (!rarityMap) return [];
+  const out = [];
+  for (const rarity of Object.keys(rarityMap)) {
+    for (const entry of rarityMap[rarity]) out.push({ rarity, entry });
+  }
+  return out;
+}
+
+function populateAlignLayers() {
+  if (!tree) return;
+  const layers = LAYER_ORDER.filter(l => tree[l]);
+  [alignLayerA, alignLayerB].forEach(sel => {
+    sel.innerHTML = layers.map(l => `<option value="${l}">${l}</option>`).join('');
+  });
+  // default: A = Body if present, B = the last layer (top of stack) if present
+  if (layers.includes('Body')) alignLayerA.value = 'Body';
+  alignLayerB.value = layers[layers.length - 1];
+  populateAlignTraits('A');
+  populateAlignTraits('B');
+
+  const bodyList = flatTraitList('Body');
+  alignBodyRef.innerHTML = bodyList.map((t, i) => `<option value="${i}">${t.rarity} / ${t.entry.name}</option>`).join('');
+  bodyOutlineCanvas = null; bodyOutlineKey = null;
+}
+
+async function getBodyOutlineCanvas() {
+  const bodyList = flatTraitList('Body');
+  const pick = bodyList[+alignBodyRef.value];
+  if (!pick) return null;
+  const key = pick.entry.name + '|' + pick.rarity;
+  if (bodyOutlineCanvas && bodyOutlineKey === key) return bodyOutlineCanvas;
+
+  const bmp = await createImageBitmap(pick.entry.blob);
+  const src = document.createElement('canvas');
+  src.width = 1254; src.height = 1254;
+  const sctx = src.getContext('2d');
+  sctx.drawImage(bmp, 0, 0, 1254, 1254);
+  const data = sctx.getImageData(0, 0, 1254, 1254);
+  const w = data.width, h = data.height, px = data.data;
+  const out = document.createElement('canvas');
+  out.width = w; out.height = h;
+  const octx = out.getContext('2d');
+  const outData = octx.createImageData(w, h);
+  const alphaAt = (x, y) => (x < 0 || y < 0 || x >= w || y >= h) ? 0 : px[(y * w + x) * 4 + 3];
+  const THRESH = 20;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const a = alphaAt(x, y);
+      const isFilled = a > THRESH;
+      const edge = isFilled && (alphaAt(x + 1, y) <= THRESH || alphaAt(x - 1, y) <= THRESH || alphaAt(x, y + 1) <= THRESH || alphaAt(x, y - 1) <= THRESH);
+      if (edge) {
+        const i = (y * w + x) * 4;
+        outData.data[i] = 255; outData.data[i + 1] = 40; outData.data[i + 2] = 40; outData.data[i + 3] = 255;
+      }
+    }
+  }
+  octx.putImageData(outData, 0, 0);
+  bodyOutlineCanvas = out; bodyOutlineKey = key;
+  return out;
+}
+
+function populateAlignTraits(which) {
+  const layerSel = which === 'A' ? alignLayerA : alignLayerB;
+  const traitSel = which === 'A' ? alignTraitA : alignTraitB;
+  const list = flatTraitList(layerSel.value);
+  traitSel.innerHTML = list.map((t, i) => `<option value="${i}">${t.rarity} / ${t.entry.name}</option>`).join('');
+  traitSel.dataset.layer = layerSel.value;
+}
+
+async function drawAlign() {
+  if (!tree) return;
+  const listA = flatTraitList(alignLayerA.value);
+  const listB = flatTraitList(alignLayerB.value);
+  const pickA = listA[+alignTraitA.value];
+  const pickB = listB[+alignTraitB.value];
+  if (!pickA || !pickB) { alignCanvasBox.innerHTML = '<span>choose two traits</span>'; return; }
+
+  const c = document.createElement('canvas');
+  c.width = 1254; c.height = 1254;
+  const ctx = c.getContext('2d');
+  const bmpA = await createImageBitmap(pickA.entry.blob);
+  const bmpB = await createImageBitmap(pickB.entry.blob);
+
+  const outlineCanvas = alignShowBodyOutline.checked ? await getBodyOutlineCanvas() : null;
+
+  function paint() {
+    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, c.width, c.height);
+    if (alignMode === 'diff') {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      ctx.drawImage(bmpA, 0, 0, c.width, c.height);
+      ctx.globalCompositeOperation = 'difference';
+      ctx.drawImage(bmpB, 0, 0, c.width, c.height);
+      ctx.globalCompositeOperation = 'source-over';
+    } else if (alignMode === 'onion') {
+      ctx.globalAlpha = 1;
+      ctx.drawImage(alignOnionShowingA ? bmpA : bmpB, 0, 0, c.width, c.height);
+    } else {
+      ctx.globalAlpha = 1;
+      ctx.drawImage(bmpA, 0, 0, c.width, c.height);
+      ctx.globalAlpha = (+alignOpacity.value) / 100;
+      ctx.drawImage(bmpB, 0, 0, c.width, c.height);
+      ctx.globalAlpha = 1;
+    }
+    if (outlineCanvas) {
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.drawImage(outlineCanvas, 0, 0, c.width, c.height);
+    }
+  }
+  paint();
+
+  alignCanvasBox.innerHTML = '';
+  const img = document.createElement('img');
+  alignCanvasBox.appendChild(img);
+  img.src = c.toDataURL('image/png');
+
+  if (alignOnionTimer) { clearInterval(alignOnionTimer); alignOnionTimer = null; }
+  if (alignMode === 'onion') {
+    alignOnionTimer = setInterval(() => {
+      alignOnionShowingA = !alignOnionShowingA;
+      paint();
+      img.src = c.toDataURL('image/png');
+    }, 500);
+  }
+}
+
+alignBtn.addEventListener('click', () => {
+  if (!tree) return;
+  populateAlignLayers();
+  alignModal.classList.add('open');
+  drawAlign();
+});
+closeAlignBtn.addEventListener('click', () => {
+  alignModal.classList.remove('open');
+  if (alignOnionTimer) { clearInterval(alignOnionTimer); alignOnionTimer = null; }
+});
+alignLayerA.addEventListener('change', () => { populateAlignTraits('A'); drawAlign(); });
+alignLayerB.addEventListener('change', () => { populateAlignTraits('B'); drawAlign(); });
+alignTraitA.addEventListener('change', drawAlign);
+alignTraitB.addEventListener('change', drawAlign);
+alignShowBodyOutline.addEventListener('change', drawAlign);
+alignBodyRef.addEventListener('change', drawAlign);
+alignOpacity.addEventListener('input', () => { alignOpacityVal.textContent = alignOpacity.value; if (alignMode === 'normal') drawAlign(); });
+alignModeButtons.querySelectorAll('button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    alignModeButtons.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    alignMode = btn.dataset.mode;
+    alignOpacityWrap.style.display = alignMode === 'normal' ? 'block' : 'none';
+    drawAlign();
+  });
+});
+
+function currentBatchSize() {
+  const v = Math.floor(+exportBatchSize.value);
+  if (!v || v < 1) return 100;
+  return Math.min(v, 2000);
+}
+
+async function loadSavedState() {
+  try {
+    const savedTree = await idbGet('tree');
+    if (!savedTree) return;
+    tree = savedTree;
+    oneOfOnes = (await idbGet('oneOfOnes')) || [];
+    showMainScreen();
+    const savedPlan = await idbGet('collectionPlan');
+    if (savedPlan && savedPlan.length) {
+      collectionPlan = hydratePlan(savedPlan);
+      exportCursor = (await idbGet('exportCursor')) || 0;
+      collectionTools.style.display = 'block';
+      collectionStatus.textContent = exportCursor >= collectionPlan.length
+        ? `${collectionPlan.length.toLocaleString()} unique Lads planned (restored). All JPGs already exported.`
+        : `${collectionPlan.length.toLocaleString()} total planned (restored), including ${oneOfOnes.length.toLocaleString()} scattered 1/1${oneOfOnes.length===1?'':'s'}. Export images in batches, or use Export All.`;
+      exportBatchBtn.textContent = exportCursor >= collectionPlan.length ? 'All JPGs Exported' : `Export Next ${Math.min(currentBatchSize(), collectionPlan.length - exportCursor)} JPGs`;
+      exportBatchBtn.disabled = exportCursor >= collectionPlan.length;
+      exportAllBtn.disabled = exportCursor >= collectionPlan.length;
+      selectedSupply = collectionPlan.length;
+      updateBuildButtonLabel();
+    }
+  } catch (err) {
+    console.error('Failed to load saved state', err);
+  }
+}
+loadSavedState();
+
+// ---- Bulk Outline Export ----
+const bulkLayerToggles = document.getElementById('bulkLayerToggles');
+const bulkSelectAllBtn = document.getElementById('bulkSelectAllBtn');
+const bulkDeselectAllBtn = document.getElementById('bulkDeselectAllBtn');
+const bulkTraitList = document.getElementById('bulkTraitList');
+const bulkDownloadBtn = document.getElementById('bulkDownloadBtn');
+const bulkProgress = document.getElementById('bulkProgress');
+const bulkProgressBar = document.getElementById('bulkProgressBar');
+const bulkStatus = document.getElementById('bulkStatus');
+
+// Selected trait keys: "layer|rarity|name"
+let bulkSelected = new Set();
+let bulkAllTraits = []; // flat array of {layer, rarity, name}
+
+function buildBulkTraitList() {
+  bulkAllTraits = [];
+  bulkSelected = new Set();
+  if (!tree) return;
+  for (const layer of LAYER_ORDER) {
+    const rarityMap = tree[layer];
+    if (!rarityMap) continue;
+    for (const rarity of Object.keys(rarityMap)) {
+      for (const entry of rarityMap[rarity]) {
+        bulkAllTraits.push({ layer, rarity, name: entry.name });
+      }
+    }
+  }
+  // Select all by default
+  bulkAllTraits.forEach(t => bulkSelected.add(bulkKey(t)));
+}
+
+function bulkKey(t) { return t.layer + '|' + t.rarity + '|' + t.name; }
+
+function renderBulkUI() {
+  if (!tree) return;
+  buildBulkTraitList();
+
+  // Layer toggle buttons
+  bulkLayerToggles.innerHTML = '';
+  for (const layer of LAYER_ORDER) {
+    if (!tree[layer]) continue;
+    const btn = document.createElement('button');
+    btn.textContent = layer;
+    btn.dataset.layer = layer;
+    btn.addEventListener('click', () => toggleBulkLayer(layer));
+    bulkLayerToggles.appendChild(btn);
+  }
+  updateBulkLayerButtons();
+
+  // Trait list
+  renderBulkTraits();
+}
+
+function renderBulkTraits() {
+  bulkTraitList.innerHTML = '';
+  for (const t of bulkAllTraits) {
+    const key = bulkKey(t);
+    const row = document.createElement('div');
+    row.className = 'bulk-trait-item';
+    row.innerHTML = `<label><input type="checkbox" ${bulkSelected.has(key) ? 'checked' : ''} data-key="${key}"><span class="bulk-trait-layer">${t.layer}</span><span class="bulk-trait-name">${t.name}</span><span class="bulk-trait-rarity">${t.rarity}</span></label>`;
+    row.querySelector('input').addEventListener('change', (e) => {
+      if (e.target.checked) bulkSelected.add(key); else bulkSelected.delete(key);
+      updateBulkLayerButtons();
+    });
+    bulkTraitList.appendChild(row);
+  }
+}
+
+function toggleBulkLayer(layer) {
+  const layerTraits = bulkAllTraits.filter(t => t.layer === layer);
+  const allSelected = layerTraits.every(t => bulkSelected.has(bulkKey(t)));
+  layerTraits.forEach(t => {
+    if (allSelected) bulkSelected.delete(bulkKey(t));
+    else bulkSelected.add(bulkKey(t));
+  });
+  renderBulkTraits();
+  updateBulkLayerButtons();
+}
+
+function updateBulkLayerButtons() {
+  bulkLayerToggles.querySelectorAll('button').forEach(btn => {
+    const layer = btn.dataset.layer;
+    const layerTraits = bulkAllTraits.filter(t => t.layer === layer);
+    const selCount = layerTraits.filter(t => bulkSelected.has(bulkKey(t))).length;
+    btn.classList.remove('active', 'partial');
+    if (selCount === layerTraits.length) btn.classList.add('active');
+    else if (selCount > 0) btn.classList.add('partial');
+  });
+}
+
+bulkSelectAllBtn.addEventListener('click', () => {
+  bulkAllTraits.forEach(t => bulkSelected.add(bulkKey(t)));
+  renderBulkTraits();
+  updateBulkLayerButtons();
+});
+bulkDeselectAllBtn.addEventListener('click', () => {
+  bulkSelected.clear();
+  renderBulkTraits();
+  updateBulkLayerButtons();
+});
+
+// Re-render bulk UI when Edit Traits modal opens
+const origEditOpen = editTraitsBtn.onclick;
+editTraitsBtn.addEventListener('click', () => {
+  if (tree) renderBulkUI();
+});
+
+async function downloadOutlinedZip() {
+  if (!tree || !bulkAllTraits.length) return;
+
+  const selectedCount = bulkSelected.size;
+  const isAllMode = bulkExportMode === 'all';
+
+  // In 'selected' mode, require at least one selected
+  if (!isAllMode && selectedCount === 0) {
+    alert('Select at least one trait to include.');
+    return;
+  }
+
+  resetOpControl();
+  bulkDownloadBtn.disabled = true;
+  bulkDownloadBtn.textContent = 'Processing...';
+  bulkProgress.style.display = 'block';
+  bulkProgressBar.style.width = '0%';
+  bulkStatus.textContent = isAllMode ? 'Preparing all traits...' : 'Preparing selected traits...';
+
+  const oP = +document.getElementById('outlineOutside').value || 0;
+  const iP = +document.getElementById('outlineInside').value || 0;
+  const useOL = outlinesEnabled && (oP || iP);
+
+  const zip = new JSZip();
+  let processed = 0;
+  let outlined = 0;
+  let included = 0;
+  const total = isAllMode ? bulkAllTraits.length : selectedCount;
+
+  for (const t of bulkAllTraits) {
+    if (opControl.stopped) break;
+    await waitWhilePaused();
+    if (opControl.stopped) break;
+
+    const key = bulkKey(t);
+    const isSelected = bulkSelected.has(key);
+
+    // In 'selected' mode, skip non-selected traits
+    if (!isAllMode && !isSelected) continue;
+
+    const rarityMap = tree[t.layer];
+    if (!rarityMap || !rarityMap[t.rarity]) continue;
+    const entry = rarityMap[t.rarity].find(e => e.name === t.name);
+    if (!entry) continue;
+
+    let blob = entry.blob;
+    if (isSelected && useOL) {
+      blob = await applyOutline(entry.blob, oP, iP);
+      outlined++;
+    }
+
+    zip.file(t.layer + '/' + t.rarity + '/' + t.name + '.png', blob);
+    processed++;
+    included++;
+
+    if (processed % 10 === 0 || processed === total) {
+      const pct = (processed / total * 100);
+      bulkProgressBar.style.width = pct + '%';
+      bulkStatus.textContent = 'Processing ' + processed + ' / ' + total + ' traits (' + pct.toFixed(1) + '%)...';
+      await nextFrame();
+    }
+  }
+
+  // Add 1/1s if any (only in 'all' mode)
+  if (isAllMode && oneOfOnes.length) {
+    const folder = zip.folder('1of1s');
+    for (const oo of oneOfOnes) {
+      folder.file(oo.name + '.png', oo.blob);
+    }
+  }
+
+  if (opControl.stopped) {
+    bulkStatus.textContent = 'Stopped: ' + processed + ' / ' + total + ' traits processed.';
+  } else {
+    bulkStatus.textContent = 'Done! Packaging ZIP...';
+    await nextFrame();
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = isAllMode ? 'hoodstreet-all-traits.zip' : 'hoodstreet-selected-traits.zip';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    bulkStatus.textContent = isAllMode
+      ? 'Downloaded! All ' + included + ' traits (' + outlined + ' with outlines).'
+      : 'Downloaded! ' + included + ' selected traits (' + outlined + ' with outlines).';
+  }
+
+  bulkProgressBar.style.width = opControl.stopped ? '0%' : '100%';
+  bulkDownloadBtn.disabled = false;
+  bulkDownloadBtn.textContent = 'Download ZIP';
+}
+
+bulkDownloadBtn.addEventListener('click', downloadOutlinedZip);
+
+// ---- Export mode toggle ----
+let bulkExportMode = 'all'; // 'all' or 'selected'
+const bulkExportModeBtns = document.getElementById('bulkExportMode');
+bulkExportModeBtns.querySelectorAll('button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    bulkExportModeBtns.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    bulkExportMode = btn.dataset.mode;
+  });
+});
+
+// ---- Bulk metadata helpers ----
+const bulkDownloadCsvBtn = document.getElementById('bulkDownloadCsvBtn');
+const bulkDownloadJsonBtn = document.getElementById('bulkDownloadJsonBtn');
+
+function buildBulkMetadataItems() {
+  if (!tree) return [];
+  const items = [];
+  const name = (collectionName.value || 'HoodStreet').trim();
+  const desc = (collectionDesc.value || '').trim();
+  const base = imageBaseUri.value.replace(/\/$/, '');
+  let idx = 0;
+  for (const layer of LAYER_ORDER) {
+    const rarityMap = tree[layer];
+    if (!rarityMap) continue;
+    for (const rarity of Object.keys(rarityMap)) {
+      for (const entry of rarityMap[rarity]) {
+        idx++;
+        items.push({
+          id: idx,
+          filename: idx + '.png',
+          name: name + ' #' + idx,
+          description: desc,
+          image: base + '/' + idx + '.png',
+          attributes: [{ trait_type: layer, value: entry.name }],
+          _layer: layer,
+          _rarity: rarity,
+          _traitName: entry.name
+        });
+      }
+    }
+  }
+  // Include 1/1s
+  for (const oo of oneOfOnes) {
+    idx++;
+    items.push({
+      id: idx,
+      filename: idx + '.png',
+      name: name + ' #' + idx,
+      description: desc,
+      image: base + '/' + idx + '.png',
+      attributes: [
+        { trait_type: 'type', value: '1 of 1' },
+        { trait_type: 'edition name', value: oo.name }
+      ],
+      _layer: '1of1',
+      _rarity: '1of1',
+      _traitName: oo.name
+    });
+  }
+  return items;
+}
+
+function buildBulkMetadataRows() {
+  const items = buildBulkMetadataItems();
+  if (!items.length) return null;
+  // OpenSea CSV column order matching LAYER_ORDER + 1/1 fields
+  const traitColumns = [...LAYER_ORDER.filter(l => tree && tree[l]), 'type', 'edition name'];
+  const header = ['tokenID', 'name', 'description', 'file_name', ...traitColumns.map(t => 'attributes[' + t + ']')];
+  const rows = [header];
+  items.forEach(item => {
+    const rowMap = {};
+    item.attributes.forEach(a => rowMap[a.trait_type.toLowerCase()] = a.value);
+    rows.push([
+      item.id,
+      item.name,
+      item.description,
+      item.filename,
+      ...traitColumns.map(t => rowMap[t] || '')
+    ]);
+  });
+  return { rows, count: items.length };
+}
+
+bulkDownloadCsvBtn.addEventListener('click', () => {
+  const result = buildBulkMetadataRows();
+  if (!result) { alert('No traits loaded.'); return; }
+  const csv = result.rows.map(r => r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'hoodstreet-metadata.csv';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  bulkStatus.textContent = 'CSV downloaded! ' + result.count + ' traits.';
+});
+
+bulkDownloadJsonBtn.addEventListener('click', () => {
+  const items = buildBulkMetadataItems();
+  if (!items.length) { alert('No traits loaded.'); return; }
+  // Strip internal fields
+  const clean = items.map(({ id, filename, name, description, image, attributes }) =>
+    ({ name, description, image, attributes })
+  );
+  const blob = new Blob([JSON.stringify(clean, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'hoodstreet-metadata.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  bulkStatus.textContent = 'JSON downloaded! ' + items.length + ' traits.';
+});
+
+</script>
+
+</body>
+
+</html>
+
+

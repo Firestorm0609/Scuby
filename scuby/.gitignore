@@ -1,0 +1,7 @@
+*.json
+.env
+__pycache__/
+*.bak
+*.pyc
+
+solscan_cache.json

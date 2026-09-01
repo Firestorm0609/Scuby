@@ -1,0 +1,17 @@
+{
+  "name": "botstreet",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:e2e": "tsx tests/test-agents-e2e.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@upstash/box": "^0.1.30",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

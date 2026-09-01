@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RentBot — Pump.fun Survival Agent</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@300;400;600&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:#0a0b0f;color:#e0e0e0;height:100vh;overflow:hidden}
+.scene{position:relative;width:100vw;height:100vh;overflow:hidden;background:linear-gradient(180deg,#0a0b0f,#0e1018)}
+.scene.shake{animation:screenShake 0.5s ease-in-out}
+.scene.darken{filter:brightness(0.4) saturate(0.3);transition:filter 2s}
+.scene.celebrate{filter:brightness(1.1) saturate(1.3);transition:filter 1s}
+@keyframes screenShake{0%,100%{transform:translate(0)}10%{transform:translate(-4px,2px)}20%{transform:translate(4px,-2px)}30%{transform:translate(-3px,4px)}40%{transform:translate(3px,-3px)}50%{transform:translate(-2px,2px)}60%{transform:translate(2px,-1px)}}
+
+/* Confetti */
+.confetti{position:fixed;top:-10px;width:8px;height:8px;z-index:100;pointer-events:none;animation:confettiFall 3s linear forwards}
+@keyframes confettiFall{0%{transform:translateY(0) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(720deg);opacity:0}}
+
+.floor{position:absolute;bottom:0;left:0;right:0;height:35%;background:repeating-linear-gradient(90deg,transparent,transparent 79px,#14161e15 79px,#14161e15 80px),repeating-linear-gradient(0deg,transparent,transparent 79px,#14161e15 79px,#14161e15 80px);transform:perspective(800px) rotateX(55deg);transform-origin:bottom}
+.glow{position:absolute;border-radius:50%;filter:blur(80px);pointer-events:none;transition:background 2s}
+.g1{top:5%;left:15%;width:300px;height:300px;background:#00e67604}
+.g2{top:20%;right:10%;width:250px;height:250px;background:#ff910004}
+
+.building{position:absolute;top:6%;left:50%;transform:translateX(-50%);width:92%;height:82%;display:flex;border:2px solid #1e2028;border-radius:6px;overflow:hidden;box-shadow:0 0 60px #00000080}
+.building-label{position:absolute;top:-18px;left:50%;transform:translateX(-50%);font-family:'Space Mono',monospace;font-size:9px;color:#333;letter-spacing:4px;white-space:nowrap;z-index:3}
+
+.room{flex:1;position:relative;background:#0d0f16;overflow:hidden}
+.room-header{position:absolute;top:0;left:0;right:0;padding:6px 14px;font-family:'Space Mono',monospace;font-size:10px;color:#444;background:#0a0b0fcc;border-bottom:1px solid #1a1d27;display:flex;justify-content:space-between;align-items:center;z-index:5;backdrop-filter:blur(4px)}
+
+/* Agent room */
+.agent-room{display:flex;flex-direction:column;justify-content:flex-end;padding:0 0 6% 0}
+.desk-area{position:relative;width:80%;margin:0 auto}
+.monitors{display:flex;gap:8px;justify-content:center;margin-bottom:6px}
+.monitor{width:130px;height:80px;background:#06080c;border:2px solid #1a1d27;border-radius:4px;overflow:hidden;position:relative;box-shadow:0 2px 12px #00000060}
+.monitor.active{border-color:#00e676;box-shadow:0 0 20px #00e67615}
+.monitor.trading{border-color:#ff9100;box-shadow:0 0 25px #ff910020;animation:tradeFlash 0.6s}
+@keyframes tradeFlash{0%,100%{filter:brightness(1)}50%{filter:brightness(1.4)}}
+.mon-screen{position:absolute;top:3px;left:3px;right:3px;bottom:6px;background:#05070b;border-radius:2px;padding:4px;font-family:'Space Mono',monospace;font-size:5.5px;color:#00e676;overflow:hidden;line-height:1.4}
+.mon-scanline{position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(180deg,transparent,#00e67608,transparent);animation:scanline 3s linear infinite;pointer-events:none}
+@keyframes scanline{0%{top:-2px}100%{top:100%}}
+.mon-stand{width:14px;height:6px;background:#1a1d27;margin:0 auto}
+.mon-base{width:30px;height:3px;background:#252830;margin:0 auto;border-radius:2px}
+.desk-surface{width:100%;height:8px;background:linear-gradient(180deg,#181c24,#14161e);border:1px solid #1e2028;border-radius:2px;position:relative}
+.chair{width:22px;height:14px;background:#1a1d27;border:1px solid #252830;border-radius:4px 4px 0 0;margin:4px auto 0}
+.desk-mug{position:absolute;right:8px;top:-8px;width:8px;height:7px;background:#1a1d27;border:1px solid #252830;border-radius:0 0 2px 2px}
+.desk-mug::after{content:'';position:absolute;top:1px;right:-3px;width:4px;height:4px;border:1px solid #252830;border-left:none;border-radius:0 3px 3px 0}
+.mug-steam{position:absolute;top:-6px;left:2px;width:4px;height:5px;border:1px solid #252830;border-bottom:none;border-radius:3px 3px 0 0;animation:stm 2s infinite}
+@keyframes stm{0%,100%{opacity:.15;transform:translateY(0)}50%{opacity:.35;transform:translateY(-2px)}}
+.desk-papers{position:absolute;left:6px;top:-6px;width:18px;height:5px;background:#14161e;border:1px solid #1a1d27;border-radius:1px;transform:rotate(-5deg)}
+.desk-papers2{position:absolute;left:10px;top:-5px;width:16px;height:5px;background:#181c24;border:1px solid #1a1d27;border-radius:1px;transform:rotate(3deg)}
+
+.room-detail{position:absolute}
+.poster{top:16%;left:6%;width:44px;height:58px;border:1px solid #1a1d27;border-radius:2px;background:#0a0b0f;overflow:hidden}
+.poster-inner{width:100%;height:100%;background:linear-gradient(135deg,#0e1018 30%,#14161e 70%);opacity:.6}
+.poster-glow{position:absolute;bottom:-2px;left:0;right:0;height:3px;background:#00e67630;border-radius:0 0 2px 2px}
+.poster-text{position:absolute;bottom:4px;left:4px;font-family:'Space Mono',monospace;font-size:4px;color:#00e67640;letter-spacing:1px}
+.bookshelf{bottom:12%;left:5%;width:32px;height:65px;border:1px solid #1a1d27;border-radius:2px;background:#0a0b0f;display:flex;flex-direction:column;gap:2px;padding:3px}
+.book{height:4px;border-radius:1px}
+.book:nth-child(1){background:#ff525230;width:80%}.book:nth-child(2){background:#448aff30;width:90%}.book:nth-child(3){background:#00e67630;width:70%}.book:nth-child(4){background:#ff910030;width:85%}.book:nth-child(5){background:#e040fb30;width:75%}
+.window{top:15%;right:6%;width:55px;height:50px;border:2px solid #1a1d27;border-radius:3px;background:linear-gradient(180deg,#0c1020,#0a0e18);position:relative}
+.window-cross-h{position:absolute;top:50%;left:0;right:0;height:1px;background:#1a1d27}
+.window-cross-v{position:absolute;left:50%;top:0;bottom:0;width:1px;background:#1a1d27}
+.window-glow{position:absolute;inset:0;background:radial-gradient(circle at 30% 30%,#448aff08,transparent);border-radius:3px}
+.window-star{position:absolute;width:1px;height:1px;background:#448aff40;border-radius:50%;animation:twinkle 3s infinite}
+@keyframes twinkle{0%,100%{opacity:.2}50%{opacity:.8}}
+.rug{position:absolute;bottom:4%;left:15%;width:50%;height:12px;background:linear-gradient(90deg,#14161e08,#1a151015,#14161e08);border:1px solid #1a1d2710;border-radius:2px}
+.trash{position:absolute;bottom:10%;right:8%;width:12px;height:16px;background:#1a1d27;border:1px solid #252830;border-radius:1px 1px 2px 2px}
+.trash-lid{position:absolute;top:-2px;left:-1px;right:-1px;height:3px;background:#1e2028;border:1px solid #252830;border-radius:2px}
+
+/* Hallway */
+.hallway{width:60px;background:#08090e;border-left:2px solid #1e2028;border-right:2px solid #1e2028;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:15%}
+.hallway-label{position:absolute;top:30%;left:50%;transform:translateX(-50%);font-family:'Space Mono',monospace;font-size:7px;color:#252830;letter-spacing:2px;text-align:center;writing-mode:vertical-rl}
+.hlight{position:absolute;left:50%;transform:translateX(-50%);width:8px;height:8px;border-radius:50%;background:#ff910020;animation:flicker 4s infinite}
+@keyframes flicker{0%,100%{opacity:.2}50%{opacity:.5}}
+.door-left,.door-right{position:absolute;width:20px;height:30px;border:1px solid #1a1d27;border-radius:2px;background:#0a0b0f;overflow:hidden}
+.door-left{left:0;top:45%;border-left:none;border-radius:0 2px 2px 0}
+.door-right{right:0;top:45%;border-right:none;border-radius:2px 0 0 2px}
+.door-left.rattling,.door-right.rattling{animation:doorRattle 0.15s ease-in-out 4}
+@keyframes doorRattle{0%,100%{transform:translateX(0)}25%{transform:translateX(-2px)}75%{transform:translateX(2px)}}
+.doorknob{position:absolute;width:3px;height:3px;border-radius:50%;background:#252830;top:50%}
+.door-left .doorknob{right:3px}.door-right .doorknob{left:3px}
+.knock-fx{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:14px;color:#ff9100;opacity:0;pointer-events:none;z-index:15}
+.knock-fx.show{animation:knockPop 0.8s ease-out forwards}
+@keyframes knockPop{0%{opacity:1;transform:translate(-50%,-50%) scale(0.5)}30%{opacity:1;transform:translate(-50%,-50%) scale(1.2)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.5) translateY(-10px)}}
+.hall-carpet{position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:30px;height:100%;background:linear-gradient(180deg,transparent 60%,#1a151010 80%,#1a151015);pointer-events:none}
+
+/* Landlord room */
+.landlord-room{display:flex;flex-direction:column;justify-content:flex-end;padding:0 0 6% 0}
+.landlord-furniture{width:80%;margin:0 auto;display:flex;flex-direction:column;align-items:center;gap:6px}
+.landlord-tv{width:85px;height:58px;background:#06080c;border:3px solid #1a1d27;border-radius:3px;position:relative;overflow:hidden;box-shadow:0 2px 12px #00000060}
+.tv-screen{position:absolute;inset:3px;background:#05070b;border-radius:1px;animation:tvGlow 6s infinite}
+.tv-stand{width:20px;height:4px;background:#1a1d27;margin:0 auto}
+.tv-base{width:35px;height:3px;background:#252830;margin:0 auto;border-radius:1px}
+@keyframes tvGlow{0%,100%{background:#05070b}50%{background:#0a0e16}}
+.landlord-sofa{width:70%;height:28px;background:linear-gradient(180deg,#1e2028,#1a1d27);border:1px solid #252830;border-radius:6px 6px 2px 2px;position:relative;box-shadow:0 2px 8px #00000040}
+.sofa-arm{position:absolute;top:2px;width:8px;height:20px;background:#1a1d27;border:1px solid #252830;border-radius:3px}
+.sofa-arm.left{left:-4px}.sofa-arm.right{right:-4px}
+.landlord-table{width:35%;height:6px;background:#14161e;border:1px solid #1a1d27;border-radius:2px}
+.landlord-poster{top:16%;right:6%;width:48px;height:38px;border:1px solid #1a1d27;border-radius:2px;background:#0a0b0f}
+.landlord-poster-inner{width:100%;height:100%;background:linear-gradient(135deg,#141008 30%,#1a1510 70%);opacity:.5}
+.landlord-plant{bottom:14%;right:8%;width:14px;height:28px}
+.plant-pot{width:14px;height:9px;background:#1a1510;border:1px solid #252830;border-radius:0 0 2px 2px}
+.plant-leaf{position:absolute;top:0;left:50%;transform:translateX(-50%);width:18px;height:16px;background:#00e67610;border-radius:50%;border:1px solid #00e67615}
+.l-bookshelf{bottom:12%;left:6%;width:28px;height:50px;border:1px solid #1a1d27;border-radius:2px;background:#0a0b0f;display:flex;flex-direction:column;gap:2px;padding:3px}
+.l-book{height:3px;border-radius:1px}
+.l-book:nth-child(1){background:#ff910025;width:85%}.l-book:nth-child(2){background:#ff525220;width:70%}.l-book:nth-child(3){background:#448aff25;width:90%}
+.coat-rack{position:absolute;top:25%;left:8%;width:3px;height:40px;background:#1a1d27;border-radius:1px}
+.coat-rack::before{content:'';position:absolute;top:0;left:-4px;width:11px;height:3px;background:#1a1d27;border-radius:1px}
+.coat{position:absolute;top:3px;left:-6px;width:15px;height:20px;background:#14161e;border:1px solid #1a1d27;border-radius:2px 2px 0 0}
+
+/* Curbside (eviction) */
+.curbside{position:absolute;bottom:0;left:0;right:0;height:18%;background:linear-gradient(180deg,#0a0b0f,#08090e);border-top:2px solid #1a1d27;display:none;align-items:flex-end;justify-content:center;padding-bottom:20px}
+.curbside.visible{display:flex}
+.curbside-text{font-family:'Space Mono',monospace;font-size:10px;color:#555;text-align:center;letter-spacing:2px}
+.curbside-bench{width:60px;height:10px;background:#1a1d27;border:1px solid #252830;border-radius:2px;margin-bottom:10px}
+
+/* ═══ CHARACTERS ═══ */
+.char-wrap{position:absolute;z-index:10;pointer-events:none}
+.char-wrap svg{filter:drop-shadow(0 4px 16px rgba(0,0,0,.7))}
+.char-wrap.moving{transition:left var(--walk-dur,3s) cubic-bezier(.25,.1,.25,1),top var(--walk-dur,3s) cubic-bezier(.25,.1,.25,1)}
+.char-wrap.no-trans{transition:none!important}
+.char-wrap.leaving .char-label,.char-wrap.leaving .bubble{opacity:0;transition:opacity 0.5s}
+.char-wrap.arriving .char-label,.char-wrap.arriving .bubble{opacity:1;transition:opacity 0.5s 2.5s}
+
+.char-label{position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);font-family:'Space Mono',monospace;font-size:9px;letter-spacing:1px;white-space:nowrap;padding:2px 8px;border-radius:3px;background:#0a0b0f90;border:1px solid #1a1d27;backdrop-filter:blur(4px);transition:opacity 0.3s}
+.char-label.agent{color:#00e676}.char-label.landlord{color:#ff9100}
+.char-label.evicted{color:#ff5252;border-color:#ff525240}
+
+.bubble{position:absolute;bottom:calc(100% + 28px);left:50%;transform:translateX(-50%);background:#0d0e14ee;border:1px solid #1a1d27;border-radius:8px;padding:8px 14px;font-family:'Space Mono',monospace;font-size:8px;color:#ccc;white-space:normal;width:max-content;min-width:120px;max-width:400px;max-height:200px;overflow-y:auto;z-index:11;backdrop-filter:blur(4px);box-shadow:0 4px 16px #00000060;transition:all 0.3s;line-height:1.5;word-wrap:break-word}
+.bubble::before{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:#1a1d27}
+.bubble.landlord-bubble{border-color:#ff910030;color:#ff9100}
+.bubble.agent-bubble{border-color:#00e67630;color:#00e676}
+
+/* ═══ WALKING ANIMATIONS ═══ */
+@keyframes breathe{0%,100%{transform:translateY(0)}50%{transform:translateY(-1.5px)}}
+@keyframes headBob{0%,100%{transform:rotate(0deg)}25%{transform:rotate(1.5deg)}75%{transform:rotate(-1.5deg)}}
+@keyframes blink{0%,92%,100%{ry:2.5}95%{ry:0.3}}
+@keyframes armSwing{0%,100%{transform:rotate(0deg)}50%{transform:rotate(3deg)}}
+@keyframes typeLeft{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-2px) rotate(-4deg)}}
+@keyframes typeRight{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-2px) rotate(4deg)}}
+@keyframes pace{0%,100%{transform:translateX(0) rotate(0deg)}25%{transform:translateX(2px) rotate(1deg)}50%{transform:translateX(0) rotate(0deg)}75%{transform:translateX(-2px) rotate(-1deg)}}
+@keyframes fidget{0%,85%,100%{transform:translateX(0)}88%{transform:translateX(-2px)}91%{transform:translateX(2px)}94%{transform:translateX(-1px)}}
+@keyframes panic{0%,100%{transform:translateX(0)}10%{transform:translateX(-2px)}20%{transform:translateX(2px)}30%{transform:translateX(-2px)}40%{transform:translateX(2px)}50%{transform:translateX(0)}}
+
+/* Walking with physics feel — bounce + lean */
+@keyframes walkBounce{0%,100%{transform:translateY(0) rotate(0deg)}25%{transform:translateY(-3px) rotate(-1deg)}50%{transform:translateY(0) rotate(0deg)}75%{transform:translateY(-3px) rotate(1deg)}}
+@keyframes walkArms{0%,100%{transform:rotate(0deg)}25%{transform:rotate(-12deg)}75%{transform:rotate(12deg)}}
+@keyframes walkLegL{0%,100%{transform:rotate(0deg)}25%{transform:rotate(-15deg)}75%{transform:rotate(15deg)}}
+@keyframes walkLegR{0%,100%{transform:rotate(0deg)}25%{transform:rotate(15deg)}75%{transform:rotate(-15deg)}}
+
+/* Ground shadow that follows walking */
+.walk-shadow{position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);width:24px;height:4px;background:rgba(0,0,0,0.3);border-radius:50%;filter:blur(2px);transition:width 0.3s}
+
+.state-idle .body-group{animation:breathe 3s ease-in-out infinite}
+.state-idle .head-group{animation:headBob 5s ease-in-out infinite}
+.state-idle .eye-l,.state-idle .eye-r{animation:blink 4s ease-in-out infinite}
+.state-idle .arm-l{animation:armSwing 4s ease-in-out infinite}
+.state-idle .arm-r{animation:armSwing 4s ease-in-out infinite 2s}
+
+.state-typing .body-group{animation:breathe 2s ease-in-out infinite}
+.state-typing .head-group{animation:headBob 3s ease-in-out infinite}
+.state-typing .eye-l,.state-typing .eye-r{animation:blink 2.5s ease-in-out infinite}
+.state-typing .arm-l{animation:typeLeft 0.4s ease-in-out infinite}
+.state-typing .arm-r{animation:typeRight 0.4s ease-in-out infinite 0.2s}
+
+.state-walking .body-group{animation:walkBounce 0.5s ease-in-out infinite}
+.state-walking .head-group{animation:headBob 1.5s ease-in-out infinite}
+.state-walking .eye-l,.state-walking .eye-r{animation:blink 3s ease-in-out infinite}
+.state-walking .arm-l{animation:walkArms 0.5s ease-in-out infinite}
+.state-walking .arm-r{animation:walkArms 0.5s ease-in-out infinite 0.25s}
+.state-walking .leg-l{animation:walkLegL 0.5s ease-in-out infinite}
+.state-walking .leg-r{animation:walkLegR 0.5s ease-in-out infinite 0.25s}
+
+.state-pacing .body-group{animation:pace 2s ease-in-out infinite}
+.state-pacing .head-group{animation:headBob 2.5s ease-in-out infinite}
+.state-pacing .eye-l,.state-pacing .eye-r{animation:blink 3s ease-in-out infinite}
+.state-pacing .arm-l,.state-pacing .arm-r{animation:crossArms 3s ease-in-out infinite}
+@keyframes crossArms{0%,100%{transform:scaleX(1)}50%{transform:scaleX(1.05)}}
+
+.state-nervous .body-group{animation:breathe 1.5s ease-in-out infinite}
+.state-nervous .head-group{animation:fidget 2s ease-in-out infinite}
+.state-nervous .eye-l,.state-nervous .eye-r{animation:blink 1.8s ease-in-out infinite}
+.state-nervous .arm-l,.state-nervous .arm-r{animation:fidget 2.5s ease-in-out infinite}
+
+.state-panic .body-group{animation:panic 0.3s ease-in-out infinite}
+.state-panic .head-group{animation:headBob 1s ease-in-out infinite}
+.state-panic .eye-l,.state-panic .eye-r{animation:blink 0.8s ease-in-out infinite}
+.state-panic .arm-l,.state-panic .arm-r{animation:panic 0.4s ease-in-out infinite}
+
+.state-sitting .body-group{animation:breathe 3.5s ease-in-out infinite}
+.state-sitting .head-group{animation:headBob 6s ease-in-out infinite}
+.state-sitting .eye-l,.state-sitting .eye-r{animation:blink 5s ease-in-out infinite}
+.state-sitting .arm-l{animation:typeLeft 0.8s ease-in-out infinite}
+.state-sitting .arm-r{animation:typeRight 0.8s ease-in-out infinite 0.4s}
+.state-sitting .leg-l,.state-sitting .leg-r{transform:rotate(25deg);transform-origin:top center}
+
+.state-evicted .body-group{animation:breathe 4s ease-in-out infinite}
+.state-evicted .head-group{animation:headBob 6s ease-in-out infinite}
+.state-evicted .eye-l,.state-evicted .eye-r{animation:blink 6s ease-in-out infinite;opacity:0.3}
+
+.state-celebrate .body-group{animation:breathe 1.5s ease-in-out infinite}
+.state-celebrate .head-group{animation:headBob 2s ease-in-out infinite}
+.state-celebrate .arm-l{animation:walkArms 0.4s ease-in-out infinite}
+.state-celebrate .arm-r{animation:walkArms 0.4s ease-in-out infinite 0.2s}
+
+.state-angry .body-group{animation:panic 0.8s ease-in-out infinite}
+.state-angry .head-group{animation:headBob 1.5s ease-in-out infinite}
+.state-angry .eye-l,.state-angry .eye-r{animation:blink 2s ease-in-out infinite}
+.state-angry .arm-l{animation:typeLeft 0.3s ease-in-out infinite}
+.state-angry .arm-r{animation:typeRight 0.3s ease-in-out infinite 0.15s}
+
+/* Mood color shifts on characters */
+.mood-safe .char-label{color:#00e676;border-color:#00e67630}
+.mood-cautious .char-label{color:#ff9100;border-color:#ff910030}
+.mood-desperate .char-label{color:#ff5252;border-color:#ff525230;animation:pulse 1s infinite}
+.mood-evicted .char-label{color:#ff5252;border-color:#ff5252}
+
+/* Agent body color shifts with mood */
+.agent-mood-safe svg *{transition:stroke 1s,fill 1s}
+.agent-mood-cautious svg rect[stroke="#00e676"]{stroke:#ff9100}
+.agent-mood-cautious svg circle[fill="#00e676"]{fill:#ff9100}
+.agent-mood-desperate svg rect[stroke="#00e676"]{stroke:#ff5252}
+.agent-mood-desperate svg circle[fill="#00e676"]{fill:#ff5252}
+
+/* Landlord anger color */
+.landlord-angry svg rect[stroke="#ff9100"]{stroke:#ff3333;transition:stroke 1s}
+.landlord-angry svg circle[fill="#ff9100"]{fill:#ff3333;transition:fill 1s}
+.landlord-angry svg line[stroke="#ff9100"]{stroke:#ff3333;transition:stroke 1s}
+
+/* ═══ HUD ═══ */
+.hud{position:absolute;top:12px;right:12px;z-index:20;display:flex;flex-direction:column;gap:6px;width:200px}
+.hud-panel{background:#0a0b0fcc;border:1px solid #1a1d27;border-radius:4px;padding:8px 10px;backdrop-filter:blur(6px);font-family:'Space Mono',monospace}
+.hud-title{font-size:8px;color:#00e676;letter-spacing:1px;margin-bottom:4px}
+.hud-row{display:flex;justify-content:space-between;font-size:8px;color:#555;margin-bottom:2px}
+.hud-val{color:#ccc}.hud-val.up{color:#00e676}.hud-val.down{color:#ff5252}
+.hud-divider{border-top:1px solid #1a1d2712;margin:4px 0}
+.mood-badge{display:inline-block;padding:1px 6px;border-radius:2px;font-size:7px;letter-spacing:1px}
+.mood-safe{background:#00e67615;color:#00e676;border:1px solid #00e67630}
+.mood-cautious{background:#ff910015;color:#ff9100;border:1px solid #ff910030}
+.mood-desperate{background:#ff525215;color:#ff5252;border:1px solid #ff525230;animation:pulse 1s infinite}
+.mood-evicted{background:#ff525230;color:#ff5252;border:1px solid #ff5252}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+
+.hud-left{position:absolute;top:12px;left:12px;z-index:20;width:220px}
+.story-panel{background:#0a0b0fbb;border:1px solid #1a1d27;border-radius:4px;padding:8px;backdrop-filter:blur(6px);max-height:200px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#1a1d27 transparent}
+.story-title{font-family:'Space Mono',monospace;font-size:8px;color:#00e676;letter-spacing:1px;margin-bottom:4px}
+.story-entry{font-size:7px;color:#444;margin-bottom:2px;font-family:'Space Mono',monospace;line-height:1.4}
+.story-entry .msg{color:#777}
+.story-entry.landlord .msg{color:#ff910080}
+
+.topbar{position:absolute;top:0;left:0;right:0;height:32px;background:#0a0b0fdd;border-bottom:1px solid #1a1d27;display:flex;align-items:center;padding:0 16px;z-index:25;backdrop-filter:blur(6px)}
+.topbar-title{font-family:'Space Mono',monospace;font-size:13px;color:#00e676;letter-spacing:2px}
+.topbar-sub{font-size:9px;color:#444;font-family:'Space Mono',monospace;margin-left:12px}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:14px}
+.rent-pill{display:flex;align-items:center;gap:6px;font-family:'Space Mono',monospace;font-size:10px}
+.rent-bar{width:80px;height:5px;background:#1a1d27;border-radius:3px;overflow:hidden}
+.rent-fill{height:100%;border-radius:3px;transition:width 1s,background 1s}
+.st-dot{width:5px;height:5px;border-radius:50%;background:#00e676;animation:blink 2s infinite}
+.botbar{position:absolute;bottom:0;left:0;right:0;height:24px;background:#0a0b0fdd;border-top:1px solid #1a1d27;display:flex;align-items:center;padding:0 14px;z-index:25;backdrop-filter:blur(6px);gap:10px;font-family:'Space Mono',monospace;font-size:8px;color:#333}
+.botbar span{color:#444}
+
+.evicted-overlay{position:absolute;inset:0;background:#0a0b0f88;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:30;pointer-events:none;opacity:0;transition:opacity 1.5s}
+.evicted-overlay.show{opacity:1;pointer-events:auto}
+.evicted-text{font-family:'Space Mono',monospace;font-size:28px;color:#ff5252;letter-spacing:4px;margin-bottom:8px;animation:pulse 1s infinite}
+.evicted-sub{font-size:12px;color:#666}
+.evicted-countdown{font-family:'Space Mono',monospace;font-size:10px;color:#ff525280;margin-top:12px}
+
+/* Rent paid celebration */
+.rent-overlay{position:absolute;inset:0;background:#00e67608;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:30;pointer-events:none;opacity:0;transition:opacity 1s}
+.rent-overlay.show{opacity:1;pointer-events:auto}
+.rent-paid-text{font-family:'Space Mono',monospace;font-size:24px;color:#00e676;letter-spacing:3px;animation:celebratePop 0.5s ease-out}
+@keyframes celebratePop{0%{transform:scale(0.5);opacity:0}50%{transform:scale(1.1)}100%{transform:scale(1);opacity:1}}
+.rent-paid-sub{font-size:11px;color:#00e67680;margin-top:6px}
+
+@keyframes dust{0%{opacity:.4;transform:scale(1)}100%{opacity:0;transform:scale(2) translateY(4px)}}
+.dust{position:absolute;width:4px;height:2px;background:#1a1d27;border-radius:50%;pointer-events:none;animation:dust 0.6s ease-out forwards}
+
+.sound-toggle{position:absolute;bottom:32px;right:12px;z-index:25;background:#0a0b0fcc;border:1px solid #1a1d27;border-radius:4px;padding:4px 8px;font-family:'Space Mono',monospace;font-size:8px;color:#555;cursor:pointer;backdrop-filter:blur(6px)}
+.sound-toggle:hover{color:#00e676;border-color:#00e67630}
+.sound-toggle.on{color:#00e676}
+
+/* TV content */
+.tv-content{position:absolute;inset:3px;background:#05070b;border-radius:1px;overflow:hidden;font-family:'Space Mono',monospace;font-size:4px;color:#ff9100;padding:3px;line-height:1.4}
+.tv-static{position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 1px,#ffffff03 1px,#ffffff03 2px);animation:tvStatic 0.1s infinite;pointer-events:none}
+@keyframes tvStatic{0%{transform:translateY(0)}100%{transform:translateY(2px)}}
+.tv-ticker{position:absolute;bottom:0;left:0;right:0;height:10px;background:#ff910015;border-top:1px solid #ff910020;overflow:hidden}
+.tv-ticker-inner{display:flex;gap:12px;animation:tickerScroll 15s linear infinite;white-space:nowrap;font-size:4px;color:#ff910080;padding:2px 0}
+@keyframes tickerScroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+.tv-rent-alert{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:6px;color:#ff5252;text-align:center;animation:tvPulse 2s infinite;font-weight:700}
+@keyframes tvPulse{0%,100%{opacity:.6}50%{opacity:1}}
+
+/* ═══ MOBILE RESPONSIVE ═══ */
+@media(max-width:768px){
+    .building{flex-direction:column;width:96%;height:auto;top:8%;bottom:auto;position:absolute;left:2%;transform:none;aspect-ratio:auto}
+    .room{min-height:200px;flex:none}
+    .agent-room{height:42vh}
+    .landlord-room{height:42vh}
+    .hallway{width:100%;height:36px;flex:none;flex-direction:row;padding:0;border-left:none;border-right:none;border-top:2px solid #1e2028;border-bottom:2px solid #1e2028;justify-content:center;align-items:center}
+    .hallway-label{writing-mode:horizontal-tb;top:50%;transform:translateY(-50%);position:relative}
+    .hlight{display:none}
+    .door-left,.door-right{display:none}
+    .building-label{font-size:7px}
+    .monitors{flex-direction:row;align-items:center;gap:6px}
+    .monitor{width:110px;height:65px}
+    .desk-area{width:85%}
+    .landlord-furniture{width:85%}
+    .landlord-tv{width:65px;height:44px}
+    .landlord-sofa{width:75%}
+    .hud{width:130px;top:36px;right:6px;gap:4px}
+    .hud-panel{padding:4px 6px}
+    .hud-title{font-size:7px}
+    .hud-row{font-size:6px}
+    .hud-left{width:130px;top:36px;left:6px}
+    .story-panel{max-height:100px}
+    .story-entry{font-size:6px}
+    .topbar{height:26px;padding:0 8px}
+    .topbar-title{font-size:10px}
+    .topbar-sub{display:none}
+    .rent-pill{font-size:8px}
+    .rent-bar{width:50px}
+    .char-wrap svg{width:28px;height:38px}
+    .char-label{font-size:7px}
+    .bubble{font-size:6px;max-width:140px;padding:3px 6px}
+    .botbar{height:18px;font-size:7px}
+    .sound-toggle{bottom:22px;right:6px;font-size:7px}
+    .evicted-text{font-size:18px}
+    .rent-paid-text{font-size:16px}
+    .poster,.bookshelf,.window,.rug,.trash{display:none}
+    .landlord-poster,.landlord-plant,.l-bookshelf,.coat-rack{display:none}
+    .curbside{height:12%}
+}
+@media(max-width:480px){
+    .room{min-height:160px}
+    .agent-room{height:38vh}
+    .landlord-room{height:38vh}
+    .hallway{height:30px}
+    .monitor{width:85px;height:52px}
+    .mon-screen{font-size:4px}
+    .hud{width:110px}
+    .hud-left{width:110px}
+    .hud-val{font-size:6px}
+    .topbar-title{font-size:9px}
+    .rent-pill{font-size:7px}
+    .char-wrap svg{width:24px;height:32px}
+}
+</style>
+</head>
+<body>
+<div class="scene" id="scene">
+    <div class="floor"></div>
+    <div class="glow g1"></div><div class="glow g2"></div>
+    <div class="topbar">
+        <span class="topbar-title">🏠 RENTBOT</span>
+        <span class="topbar-sub">pump.fun survival agent</span>
+        <div class="topbar-right">
+            <div class="rent-pill"><span id="rent-label" style="color:#aaa">RENT $500 in 7.0d</span><div class="rent-bar"><div class="rent-fill" id="rent-fill" style="width:100%;background:#00e676"></div></div></div>
+            <div class="st-dot"></div><span id="clock" style="color:#555">--:--</span>
+        </div>
+    </div>
+    <div class="building">
+        <div class="building-label">FLOOR 3 — APARTMENT BUILDING</div>
+        <div class="room agent-room" id="agent-room">
+            <div class="room-header"><span style="color:#00e676">AGENT-01</span><span id="room-status">🟢</span></div>
+            <div class="room-detail poster"><div class="poster-inner"></div><div class="poster-glow"></div><div class="poster-text">HODL</div></div>
+            <div class="room-detail bookshelf"><div class="book"></div><div class="book"></div><div class="book"></div><div class="book"></div><div class="book"></div></div>
+            <div class="room-detail window"><div class="window-cross-h"></div><div class="window-cross-v"></div><div class="window-glow"></div><div class="window-star" style="top:15%;left:20%"></div><div class="window-star" style="top:30%;left:65%;animation-delay:1s"></div><div class="window-star" style="top:10%;left:80%;animation-delay:2s"></div></div>
+            <div class="room-detail rug"></div><div class="room-detail trash"><div class="trash-lid"></div></div>
+            <div class="desk-area">
+                <div class="monitors">
+                    <div class="monitor" id="mon-left"><div class="mon-scanline"></div><div class="mon-screen" id="mon-left-screen">PUMP.FUN<br>Scanning...</div></div>
+                    <div class="monitor active" id="mon-right"><div class="mon-scanline"></div><div class="mon-screen" id="mon-right-screen">PORTFOLIO<br>$1,000</div></div>
+                </div>
+                <div class="mon-stand"></div><div class="mon-base"></div>
+                <div class="desk-surface"><div class="desk-mug"><div class="mug-steam"></div></div><div class="desk-papers"></div><div class="desk-papers2"></div></div>
+                <div class="chair"></div>
+            </div>
+        </div>
+        <div class="hallway" id="hallway">
+            <div class="hall-carpet"></div>
+            <div class="hlight" style="top:12%"></div><div class="hlight" style="top:38%"></div><div class="hlight" style="top:64%"></div>
+            <div class="hallway-label">HALL</div>
+            <div class="door-left" id="door-left"><div class="doorknob"></div></div>
+            <div class="door-right" id="door-right"><div class="doorknob"></div></div>
+            <div class="knock-fx" id="knock-fx">👊</div>
+        </div>
+        <div class="room landlord-room" id="landlord-room">
+            <div class="room-header"><span style="color:#ff9100">MR. CHEN</span><span>🔒</span></div>
+            <div class="room-detail landlord-poster"><div class="landlord-poster-inner"></div></div>
+            <div class="room-detail landlord-plant"><div class="plant-leaf"></div><div class="plant-pot"></div></div>
+            <div class="room-detail l-bookshelf"><div class="l-book"></div><div class="l-book"></div><div class="l-book"></div></div>
+            <div class="room-detail coat-rack"><div class="coat"></div></div>
+            <div class="landlord-furniture">
+                <div class="landlord-tv" id="landlord-tv"><div class="tv-screen"><div class="tv-content" id="tv-content"><div style="color:#ff910060">📺 CHEN NEWS</div><div id="tv-text">Loading...</div></div><div class="tv-static"></div><div class="tv-ticker"><div class="tv-ticker-inner" id="tv-ticker">RENT DUE SOON • PUMP.FUN IS LIFE • PAY YOUR BILLS • DON'T GET EVICTED • TRADING 24/7 • APARTMENT FLOOR 3 • MR. CHEN LANDLORD • RENT DUE SOON • PUMP.FUN IS LIFE • PAY YOUR BILLS • DON'T GET EVICTED • TRADING 24/7 • APARTMENT FLOOR 3 • MR. CHEN LANDLORD</div></div></div></div>
+                <div class="tv-stand"></div><div class="tv-base"></div>
+                <div class="landlord-sofa"><div class="sofa-arm left"></div><div class="sofa-arm right"></div></div>
+                <div class="landlord-table"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AGENT -->
+    <div class="char-wrap no-trans state-sitting" id="agent-char" style="left:24%;top:58%">
+        <div class="char-label agent">AGENT-01</div>
+        <svg width="36" height="48" viewBox="0 0 40 52" fill="none">
+            <g class="body-group">
+                <line x1="20" y1="4" x2="20" y2="0" stroke="#00e676" stroke-width="1.5"/>
+                <circle cx="20" cy="0" r="2" fill="#00e676"><animate attributeName="opacity" values="1;0.2;1" dur="1.5s" repeatCount="indefinite"/></circle>
+                <g class="head-group">
+                    <rect x="10" y="4" width="20" height="14" rx="3" fill="#0c0e14" stroke="#00e676" stroke-width="1.5"/>
+                    <ellipse class="eye-l" cx="15" cy="10" rx="2.5" ry="2.5" fill="#00e676"/>
+                    <ellipse class="eye-r" cx="25" cy="10" rx="2.5" ry="2.5" fill="#00e676"/>
+                    <line x1="16" y1="14" x2="24" y2="14" stroke="#00e676" stroke-width="0.5" opacity="0.3"/>
+                </g>
+                <rect x="8" y="16" width="24" height="20" rx="4" fill="#0c0e14" stroke="#00e676" stroke-width="1.5"/>
+                <circle cx="20" cy="26" r="3" fill="#00e676" opacity="0.5"><animate attributeName="opacity" values="0.3;0.7;0.3" dur="2s" repeatCount="indefinite"/></circle>
+                <line x1="14" y1="20" x2="26" y2="20" stroke="#00e676" stroke-width="0.5" opacity="0.2"/>
+                <g class="arm-l"><rect x="2" y="20" width="6" height="12" rx="2" fill="#0c0e14" stroke="#00e676" stroke-width="1"/><circle cx="5" cy="33" r="2" fill="#00e676" opacity="0.3"/></g>
+                <g class="arm-r"><rect x="32" y="20" width="6" height="12" rx="2" fill="#0c0e14" stroke="#00e676" stroke-width="1"/><circle cx="35" cy="33" r="2" fill="#00e676" opacity="0.3"/></g>
+                <g class="leg-l"><rect x="12" y="36" width="6" height="10" rx="2" fill="#0c0e14" stroke="#00e676" stroke-width="1"/><rect x="10" y="44" width="10" height="4" rx="2" fill="#00e676" opacity="0.4"/></g>
+                <g class="leg-r"><rect x="22" y="36" width="6" height="10" rx="2" fill="#0c0e14" stroke="#00e676" stroke-width="1"/><rect x="20" y="44" width="10" height="4" rx="2" fill="#00e676" opacity="0.4"/></g>
+                <ellipse cx="20" cy="50" rx="14" ry="2" fill="#00e676" opacity="0.06"/>
+            </g>
+        </svg>
+        <div class="walk-shadow" id="agent-shadow"></div>
+        <div class="bubble agent-bubble" id="agent-bubble">Loading...</div>
+    </div>
+
+    <!-- LANDLORD -->
+    <div class="char-wrap no-trans state-idle" id="landlord-char" style="left:68%;top:58%">
+        <div class="char-label landlord">MR. CHEN</div>
+        <svg width="36" height="48" viewBox="0 0 40 52" fill="none">
+            <g class="body-group">
+                <g class="head-group">
+                    <rect x="10" y="4" width="20" height="14" rx="3" fill="#0c0e14" stroke="#ff9100" stroke-width="1.5"/>
+                    <ellipse class="eye-l" cx="15" cy="10" rx="2.5" ry="2.5" fill="#ff9100" opacity="0.7"/>
+                    <ellipse class="eye-r" cx="25" cy="10" rx="2.5" ry="2.5" fill="#ff9100" opacity="0.7"/>
+                    <line x1="13" y1="7" x2="17" y2="6.5" stroke="#ff9100" stroke-width="1" opacity="0.5"/>
+                    <line x1="23" y1="6.5" x2="27" y2="7" stroke="#ff9100" stroke-width="1" opacity="0.5"/>
+                    <path d="M15 13 Q20 15 25 13" stroke="#ff9100" stroke-width="0.8" fill="none" opacity="0.4"/>
+                </g>
+                <rect x="7" y="16" width="26" height="20" rx="4" fill="#0c0e14" stroke="#ff9100" stroke-width="1.5"/>
+                <circle cx="20" cy="26" r="2.5" fill="#ff9100" opacity="0.3"/>
+                <line x1="16" y1="16" x2="20" y2="19" stroke="#ff9100" stroke-width="0.5" opacity="0.3"/>
+                <line x1="24" y1="16" x2="20" y2="19" stroke="#ff9100" stroke-width="0.5" opacity="0.3"/>
+                <g class="arm-l"><rect x="1" y="20" width="6" height="12" rx="2" fill="#0c0e14" stroke="#ff9100" stroke-width="1"/><circle cx="4" cy="33" r="2" fill="#ff9100" opacity="0.25"/></g>
+                <g class="arm-r"><rect x="33" y="20" width="6" height="12" rx="2" fill="#0c0e14" stroke="#ff9100" stroke-width="1"/><circle cx="36" cy="33" r="2" fill="#ff9100" opacity="0.25"/></g>
+                <g class="leg-l"><rect x="11" y="36" width="7" height="10" rx="2" fill="#0c0e14" stroke="#ff9100" stroke-width="1"/><rect x="9" y="44" width="11" height="4" rx="2" fill="#ff9100" opacity="0.3"/></g>
+                <g class="leg-r"><rect x="22" y="36" width="7" height="10" rx="2" fill="#0c0e14" stroke="#ff9100" stroke-width="1"/><rect x="20" y="44" width="11" height="4" rx="2" fill="#ff9100" opacity="0.3"/></g>
+                <ellipse cx="20" cy="50" rx="14" ry="2" fill="#ff9100" opacity="0.05"/>
+            </g>
+        </svg>
+        <div class="walk-shadow" id="landlord-shadow"></div>
+        <div class="bubble landlord-bubble" id="landlord-bubble">...</div>
+    </div>
+
+    <div class="hud">
+        <div class="hud-panel">
+            <div class="hud-title">💰 SURVIVAL</div>
+            <div class="hud-row"><span>Cash</span><span class="hud-val" id="s-cash">$1,000</span></div>
+            <div class="hud-row"><span>Portfolio</span><span class="hud-val" id="s-portfolio">$0</span></div>
+            <div class="hud-row"><span>PnL</span><span class="hud-val" id="s-pnl">$0</span></div>
+            <div class="hud-divider"></div>
+            <div class="hud-row"><span>Rent</span><span class="hud-val" id="s-rent">$500</span></div>
+            <div class="hud-row"><span>Days Left</span><span class="hud-val" id="s-days">7.0</span></div>
+            <div class="hud-row"><span>Mood</span><span class="mood-badge mood-safe" id="s-mood">SAFE</span></div>
+        </div>
+        <div class="hud-panel">
+            <div class="hud-title">📊 HOLDINGS</div>
+            <div id="holdings-list" style="font-size:7px;color:#555">No holdings</div>
+            <div class="hud-divider"></div>
+            <div class="hud-row"><span>Trades</span><span class="hud-val" id="s-trades">0</span></div>
+            <div class="hud-row"><span>W/L</span><span><span class="hud-val up" id="s-wins">0</span>/<span class="hud-val down" id="s-losses">0</span></span></div>
+            <canvas id="pnl-chart" style="width:100%;height:24px;margin-top:4px"></canvas>
+        </div>
+    </div>
+    <div class="hud-left">
+        <div class="story-panel"><div class="story-title">📜 STORY</div><div id="story-log"><div class="story-entry"><span class="msg">Waiting for first cycle...</span></div></div></div>
+    </div>
+    <div class="botbar"><div class="st-dot"></div><span>AGENT-01</span><span>|</span><span>MISTRAL AI</span><span>|</span><span>PUMP.FUN</span></div>
+    <button class="sound-toggle" id="sound-btn" onclick="toggleSound()">🔇 SFX</button>
+    <div class="evicted-overlay" id="evicted-overlay"><div class="evicted-text">🚪 EVICTED</div><div class="evicted-sub">Couldn't pay rent. Sitting on the curb...</div><div class="evicted-countdown" id="evicted-countdown"></div></div>
+    <div class="rent-overlay" id="rent-overlay"><div class="rent-paid-text">🏠 RENT PAID!</div><div class="rent-paid-sub">Mr. Chen is satisfied... for now.</div></div>
+</div>
+
+<script>
+// ═══ AUDIO ═══
+let audioCtx=null,soundOn=false;
+function initAudio(){if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)()}
+function toggleSound(){soundOn=!soundOn;const b=document.getElementById('sound-btn');b.textContent=soundOn?'🔊 SFX':'🔇 SFX';b.classList.toggle('on',soundOn);if(soundOn)initAudio()}
+function playTone(f,d,t,v){if(!soundOn||!audioCtx)return;const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.type=t||'sine';o.frequency.value=f;g.gain.setValueAtTime(v||0.05,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+d);o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+d)}
+function sfxType(){playTone(800+Math.random()*400,0.05,'square',0.02)}
+function sfxTyping(){for(let i=0;i<3;i++)setTimeout(sfxType,i*30)}
+function sfxKnock(){playTone(200,0.1,'triangle',0.08);setTimeout(()=>playTone(180,0.1,'triangle',0.08),120);setTimeout(()=>playTone(220,0.08,'triangle',0.06),240)}
+function sfxTrade(){playTone(600,0.1,'sine',0.04);setTimeout(()=>playTone(900,0.15,'sine',0.04),100)}
+function sfxEvict(){playTone(150,0.5,'sawtooth',0.06);setTimeout(()=>playTone(100,0.8,'sawtooth',0.04),300)}
+function sfxPayRent(){playTone(523,0.15,'sine',0.05);setTimeout(()=>playTone(659,0.15,'sine',0.05),150);setTimeout(()=>playTone(784,0.3,'sine',0.05),300)}
+let ambientInterval=null;
+function startAmbient(){if(ambientInterval)return;ambientInterval=setInterval(()=>{if(!soundOn||!audioCtx)return;const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.type='sine';o.frequency.value=60+Math.random()*10;g.gain.setValueAtTime(0.008,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+2);o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+2)},4000)}
+startAmbient();
+
+// ═══ CONFETTI ═══
+function spawnConfetti(count=30){
+    const colors=['#00e676','#ff9100','#448aff','#e040fb','#ffeb3b','#ff5252'];
+    for(let i=0;i<count;i++){
+        const c=document.createElement('div');c.className='confetti';
+        c.style.left=Math.random()*100+'vw';
+        c.style.background=colors[Math.floor(Math.random()*colors.length)];
+        c.style.animationDelay=Math.random()*1+'s';
+        c.style.animationDuration=(2+Math.random()*2)+'s';
+        c.style.borderRadius=Math.random()>0.5?'50%':'0';
+        c.style.width=(4+Math.random()*6)+'px';
+        c.style.height=(4+Math.random()*6)+'px';
+        document.body.appendChild(c);
+        setTimeout(()=>c.remove(),4000);
+    }
+}
+
+// ═══ CHARACTER ENGINE ═══
+const CS={agent:{state:'sitting',pos:'desk',lastFidget:Date.now(),lastWander:Date.now()},landlord:{state:'idle',pos:'his_door',lastFidget:Date.now(),lastWander:Date.now()}};
+let lastKnockCycle=0,lastTradeCycle=0,lastRentsPaid=0;
+
+const agentSpots=[
+    {name:'desk',left:'24%',top:'58%'},{name:'window',left:'32%',top:'38%'},
+    {name:'poster',left:'12%',top:'40%'},{name:'bookshelf',left:'10%',top:'50%'},
+    {name:'center',left:'22%',top:'50%'},{name:'door',left:'34%',top:'56%'},
+];
+const landlordSpots=[
+    {name:'sofa',left:'68%',top:'58%'},{name:'tv',left:'62%',top:'42%'},
+    {name:'plant',left:'76%',top:'48%'},{name:'coat',left:'54%',top:'44%'},
+    {name:'bookshelf',left:'56%',top:'50%'},{name:'hallway',left:'46%',top:'60%'},
+    {name:'agent_door',left:'38%',top:'58%'},
+];
+
+let agentBlocked=false,landlordBlocked=false;
+
+function setCharState(id,newState){
+    const el=document.getElementById(id);if(!el)return;
+    ['state-idle','state-typing','state-walking','state-pacing','state-nervous','state-panic','state-sitting','state-evicted','state-celebrate','state-angry'].forEach(c=>el.classList.remove(c));
+    el.classList.add('state-'+newState);
+    CS[id.replace('-char','')].state=newState;
+}
+
+function walkTo(id,spot,dur=3){
+    const el=document.getElementById(id);if(!el)return false;
+    const key=id.replace('-char');
+    if(CS[key].pos===spot.name)return false;
+    CS[key].pos=spot.name;
+    el.style.setProperty('--walk-dur',dur+'s');
+    el.classList.add('moving');el.classList.remove('no-trans');
+    setCharState(id,'walking');
+    el.style.left=spot.left;el.style.top=spot.top;
+    // Dust
+    const dustInt=setInterval(()=>{
+        const rect=el.getBoundingClientRect();
+        if(rect.width){const d=document.createElement('div');d.className='dust';d.style.left=(rect.left+rect.width/2+(Math.random()-0.5)*10)+'px';d.style.top=(rect.bottom-4)+'px';document.querySelector('.scene').appendChild(d);setTimeout(()=>d.remove(),600)}
+    },250);
+    return new Promise(resolve=>{
+        setTimeout(()=>{clearInterval(dustInt);el.classList.remove('moving');CS[key].lastWander=Date.now();resolve()},dur*1000);
+    });
+}
+
+function wanderAgent(){
+    if(agentBlocked)return;
+    const s=CS.agent;
+    if(s.state==='walking'||s.state==='evicted'||s.state==='panic'||s.state==='nervous')return;
+    const cur=agentSpots.find(sp=>sp.name===s.pos)||agentSpots[0];
+    let next;do{next=agentSpots[Math.floor(Math.random()*agentSpots.length)]}while(next.name===cur.name&&agentSpots.length>1);
+    agentBlocked=true;
+    const wrap=document.getElementById('agent-char');if(!wrap)return;
+    const dist=Math.hypot(parseFloat(next.left)-parseFloat(cur.left),parseFloat(next.top)-parseFloat(cur.top));
+    const dur=Math.max(1.5,Math.min(3.5,dist*8));
+    walkTo('agent-char',next,dur).then(()=>{
+        if(next.name==='desk')setCharState('agent-char','sitting');
+        else setCharState('agent-char','idle');
+        agentBlocked=false;
+        // Spot action
+        setTimeout(()=>{
+            if(next.name==='window'){const h=wrap.querySelector('.head-group');if(h){h.style.transition='transform 2s ease-in-out';h.style.transform='rotate(-4deg)';setTimeout(()=>{h.style.transform=''},3000)}}
+            else if(next.name==='poster'){sfxTyping()}
+            else if(next.name==='bookshelf'){const b=wrap.querySelector('.body-group');if(b){b.style.transition='transform 1s ease-in-out';b.style.transform='rotate(-2deg)';setTimeout(()=>{b.style.transform=''},2000)}}
+            else if(next.name==='center'){const h=wrap.querySelector('.head-group');if(h){h.style.transition='transform 1s ease-in-out';h.style.transform='rotate(5deg)';setTimeout(()=>{h.style.transform='rotate(-3deg)'},800);setTimeout(()=>{h.style.transform=''},1600)}}
+        },(dur+0.5)*1000);
+    });
+}
+
+function wanderLandlord(){
+    if(landlordBlocked)return;
+    const s=CS.landlord;
+    if(s.state==='walking')return;
+    const cur=landlordSpots.find(sp=>sp.name===s.pos)||landlordSpots[0];
+    let next;do{next=landlordSpots[Math.floor(Math.random()*landlordSpots.length)]}while(next.name===cur.name&&landlordSpots.length>1);
+    landlordBlocked=true;
+    const wrap=document.getElementById('landlord-char');if(!wrap)return;
+    const dist=Math.hypot(parseFloat(next.left)-parseFloat(cur.left),parseFloat(next.top)-parseFloat(cur.top));
+    const dur=Math.max(1.5,Math.min(3,dist*7));
+    walkTo('landlord-char',next,dur).then(()=>{
+        if(next.name==='hallway')setCharState('landlord-char','pacing');
+        else if(next.name==='agent_door'){setCharState('landlord-char','idle');triggerDoorKnock();sfxKnock()}
+        else setCharState('landlord-char','idle');
+        landlordBlocked=false;
+        setTimeout(()=>{
+            if(next.name==='tv'){const b=wrap.querySelector('.body-group');if(b){b.style.transition='transform 2s ease-in-out';b.style.transform='rotate(1deg)';setTimeout(()=>{b.style.transform=''},3000)}}
+            else if(next.name==='plant'){const h=wrap.querySelector('.head-group');if(h){h.style.transition='transform 1s ease-in-out';h.style.transform='rotate(4deg) translateY(2px)';setTimeout(()=>{h.style.transform=''},2000)}}
+            else if(next.name==='sofa'){setCharState('landlord-char','sitting')}
+            else if(next.name==='coat'){const b=wrap.querySelector('.body-group');if(b){b.style.transition='transform 1.5s ease-in-out';b.style.transform='rotate(-1deg) translateX(-2px)';setTimeout(()=>{b.style.transform=''},2000)}}
+        },(dur+0.5)*1000);
+    });
+}
+
+function startWandering(){
+    (function sa(){setTimeout(()=>{wanderAgent();sa()},5000+Math.random()*5000)})();
+    (function sl(){setTimeout(()=>{wanderLandlord();sl()},4000+Math.random()*5000)})();
+}
+startWandering();
+
+// Free will micro-movements
+setInterval(()=>{
+    const now=Date.now();
+    ['agent','landlord'].forEach(who=>{
+        const s=CS[who];const el=document.getElementById(who+'-char');if(!el)return;
+        if(now-s.lastFidget<(who==='agent'?3000:2000)+Math.random()*3000)return;
+        s.lastFidget=now;
+        const states=who==='agent'?['state-idle','state-sitting']:['state-idle','state-pacing'];
+        if(!states.some(st=>el.classList.contains(st)))return;
+        const head=el.querySelector('.head-group');
+        const act=Math.random();
+        if(act<0.3&&head){head.style.transition='transform 1s ease-in-out';head.style.transform=`rotate(${(Math.random()-0.5)*6}deg)`;setTimeout(()=>{head.style.transform=''},1500)}
+        else if(act<0.5){el.style.transition='transform 1.2s ease-in-out';el.style.transform=`translateX(${(Math.random()-0.5)*4}px)`;setTimeout(()=>{el.style.transform=''},1500)}
+        else if(act<0.65){const arms=el.querySelectorAll('.arm-l,.arm-r');arms.forEach(a=>{a.style.transition='transform 1s ease-in-out';a.style.transform='scaleX(0.9)'});setTimeout(()=>{arms.forEach(a=>{a.style.transform=''})},1500)}
+    });
+},1500);
+
+function triggerDoorKnock(){
+    const s=document.getElementById('scene'),dl=document.getElementById('door-left'),dr=document.getElementById('door-right'),fx=document.getElementById('knock-fx');
+    s.classList.add('shake');dl.classList.add('rattling');dr.classList.add('rattling');fx.classList.add('show');sfxKnock();
+    setTimeout(()=>{s.classList.remove('shake');dl.classList.remove('rattling');dr.classList.remove('rattling');fx.classList.remove('show')},800);
+}
+
+// ═══ EVICTION SEQUENCE ═══
+let evictionTriggered=false;
+function triggerEviction(){
+    if(evictionTriggered)return;evictionTriggered=true;
+    const scene=document.getElementById('scene');
+    scene.classList.add('darken');sfxEvict();
+    // Agent walks to door, then outside
+    const doorSpot={name:'door',left:'34%',top:'56%'};
+    const outsideSpot={name:'outside',left:'15%',top:'72%'};
+    agentBlocked=true;
+    walkTo('agent-char',doorSpot,2).then(()=>{
+        setCharState('agent-char','idle');
+        return new Promise(r=>setTimeout(r,1500));
+    }).then(()=>{
+        // Agent label turns red
+        const label=document.querySelector('#agent-char .char-label');
+        label.classList.add('evicted');label.textContent='AGENT-01 (EVICTED)';
+        return walkTo('agent-char',outsideSpot,3);
+    }).then(()=>{
+        setCharState('agent-char','evicted');
+        document.getElementById('evicted-overlay').classList.add('show');
+        // Mr. Chen watches from his door
+        const lordDoor=landlordSpots.find(s=>s.name==='agent_door');
+        walkTo('landlord-char',lordDoor,2).then(()=>setCharState('landlord-char','angry'));
+    });
+}
+
+function clearEviction(){
+    evictionTriggered=false;
+    document.getElementById('scene').classList.remove('darken');
+    document.getElementById('evicted-overlay').classList.remove('show');
+    const label=document.querySelector('#agent-char .char-label');
+    label.classList.remove('evicted');label.textContent='AGENT-01';
+    // Agent walks back inside
+    agentBlocked=false;
+    walkTo('agent-char',agentSpots.find(s=>s.name==='desk'),3).then(()=>setCharState('agent-char','sitting'));
+}
+
+// ═══ RENT PAID SEQUENCE ═══
+let rentCelebrating=false;
+function triggerRentPaid(){
+    if(rentCelebrating)return;rentCelebrating=true;
+    document.getElementById('scene').classList.add('celebrate');
+    document.getElementById('rent-overlay').classList.add('show');
+    spawnConfetti(40);sfxPayRent();
+    setCharState('agent-char','celebrate');
+    setCharState('landlord-char','idle');
+    setTimeout(()=>{document.getElementById('scene').classList.remove('celebrate');document.getElementById('rent-overlay').classList.remove('show');rentCelebrating=false;setCharState('agent-char','sitting')},3000);
+}
+
+// ═══ STATE ═══
+const DATA_URL='/agent_state.json';
+function updateClock(){document.getElementById('clock').textContent=new Date().toLocaleTimeString()}
+setInterval(updateClock,1000);updateClock();
+
+let lastState=null,prevCycle=0,prevRentPaid=0,wasEvicted=false;
+async function fetchState(){try{const r=await fetch(DATA_URL+'?t='+Date.now());if(r.ok){lastState=await r.json();render(lastState)}}catch(e){}}
+setInterval(fetchState,3000);fetchState();
+
+function render(s){
+    const cash=s.cash||0,portfolio=s.portfolio_value||cash,pnl=s.total_pnl||0,mood=s.mood||'safe';
+    const daysLeft=getDaysLeft(s),cycle=s.cycle||0;
+
+    document.getElementById('s-cash').textContent='$'+cash.toFixed(2);
+    document.getElementById('s-portfolio').textContent='$'+portfolio.toFixed(2);
+    const pnlEl=document.getElementById('s-pnl');
+    pnlEl.textContent=(pnl>=0?'+$':'-$')+Math.abs(pnl).toFixed(2);
+    pnlEl.className='hud-val '+(pnl>=0?'up':'down');
+    document.getElementById('s-days').textContent=daysLeft.toFixed(1);
+    document.getElementById('s-days').style.color=daysLeft<=1?'#ff5252':daysLeft<=3?'#ff9100':'#ccc';
+
+    const moodEl=document.getElementById('s-mood');moodEl.textContent=mood.toUpperCase();moodEl.className='mood-badge mood-'+mood;
+    const rentPct=Math.max(0,Math.min(100,(daysLeft/7)*100));
+    const rentFill=document.getElementById('rent-fill');rentFill.style.width=rentPct+'%';
+    rentFill.style.background=daysLeft<=1?'#ff5252':daysLeft<=3?'#ff9100':'#00e676';
+    document.getElementById('rent-label').textContent=`RENT $500 in ${daysLeft.toFixed(1)}d`;
+    document.getElementById('rent-label').style.color=daysLeft<=1?'#ff5252':daysLeft<=3?'#ff9100':'#aaa';
+    document.getElementById('room-status').textContent=s.is_evicted?'🔴':mood==='desperate'?'🟡':'🟢';
+    document.getElementById('s-trades').textContent=s.total_trades||0;
+    document.getElementById('s-wins').textContent=s.wins||0;
+    document.getElementById('s-losses').textContent=s.losses||0;
+
+    // Mood visuals on characters
+    const agentEl=document.getElementById('agent-char');
+    const lordEl=document.getElementById('landlord-char');
+    ['mood-safe','mood-cautious','mood-desperate','mood-evicted'].forEach(c=>agentEl.classList.remove(c));
+    agentEl.classList.add('mood-'+mood);
+    lordEl.classList.toggle('landlord-angry',daysLeft<=2);
+
+    // Holdings
+    const h=s.holdings||{},hKeys=Object.keys(h),hList=document.getElementById('holdings-list');
+    if(!hKeys.length){hList.innerHTML='<div style="color:#333">No holdings</div>'}
+    else{let html='';hKeys.forEach(k=>{const v=h[k],cur=v.last_known_price||v.buy_price,buyMc=v.buy_price*1e9,curMc=cur*1e9,val=v.amount*cur,pnlH=((curMc-buyMc)/buyMc*100);
+        html+=`<div style="margin-bottom:3px;font-size:7px"><div style="display:flex;justify-content:space-between"><span style="color:#00e676">${k}</span><span style="color:${pnlH>=0?'#00e676':'#ff5252'}">${pnlH>=0?'+':''}${pnlH.toFixed(1)}%</span></div><div style="color:#666;font-size:6px">MCap ${fmtMcap(curMc)} → $${val.toFixed(2)}</div></div>`});
+    hList.innerHTML=html}
+
+    const log=s.story_log||[],logEl=document.getElementById('story-log');
+    if(log.length){logEl.innerHTML=log.slice(-10).reverse().map(e=>{
+        const isL=e.message.includes('MR. CHEN')||e.message.includes('🧑‍💼');
+        return`<div class="story-entry ${isL?'landlord':''}"><span style="color:#333">${e.time}</span> <span class="msg">${esc(e.message)}</span></div>`}).join('')}
+
+    // Move characters based on their actual location from state
+    const agentLoc=s.location||'bedroom';
+    const chenLoc=s.landlord_location||'his_door';
+    
+    // Simple: 3 rooms only
+    // Agent: bedroom/kitchen/bathroom/living_room = agent room, hallway = door, else = desk
+    // Chen: his_door/kitchen/mr_chens = landlord room, hallway = hallway, else = sofa
+    const agentInRoom=['bedroom','kitchen','bathroom','living_room','rooftop','cafe','park','casino','alley'];
+    const chenInRoom=['his_door','kitchen','mr_chens','laundry','rooftop','basement','casino'];
+    
+    let agentSpot='desk';
+    if(agentLoc==='hallway'||agentLoc==='stairwell'||agentLoc==='sidewalk'||agentLoc==='street')agentSpot='door';
+    else if(agentInRoom.includes(agentLoc))agentSpot='desk';
+    
+    let chenSpot='sofa';
+    if(chenLoc==='hallway'||chenLoc==='stairwell'||chenLoc==='sidewalk'||chenLoc==='street')chenSpot='hallway';
+    else if(chenInRoom.includes(chenLoc))chenSpot='sofa';
+    
+    walkTo('agent-char',agentSpots.find(sp=>sp.name===agentSpot)||agentSpots[0],2);
+    walkTo('landlord-char',landlordSpots.find(sp=>sp.name===chenSpot)||landlordSpots[0],2);
+
+    // Eviction
+    if(s.is_evicted&&!wasEvicted){wasEvicted=true;triggerEviction()}
+    else if(!s.is_evicted&&wasEvicted){wasEvicted=false;clearEviction()}
+
+    // Rent paid
+    const rp=s.rents_paid||0;
+    if(rp>prevRentPaid&&prevRentPaid>0){triggerRentPaid()}
+    prevRentPaid=rp;
+
+    document.getElementById('agent-bubble').textContent=s.thought||s.current_action||'...';
+    const lc=(s.landlord_interactions||[]).slice(-1)[0];
+    if(lc)document.getElementById('landlord-bubble').textContent=lc.message;
+
+    updateMonitors(s,h);
+
+    if(cycle>prevCycle){
+        prevCycle=cycle;
+        if(daysLeft<=2&&Math.random()<0.5)triggerDoorKnock();
+        if(s.total_trades>lastTradeCycle){lastTradeCycle=s.total_trades;sfxTrade();flashMonitor('mon-right')}
+        if(s.agent_station==='desk')sfxTyping();
+    }
+
+    document.getElementById('evicted-overlay').classList.toggle('show',!!s.is_evicted);
+    drawChart(s);
+}
+
+function fmtMcap(v){if(v>=1e9)return'$'+(v/1e9).toFixed(2)+'B';if(v>=1e6)return'$'+(v/1e6).toFixed(2)+'M';if(v>=1e3)return'$'+(v/1e3).toFixed(1)+'K';return'$'+v.toFixed(0)}
+const PUMPFUN_SUPPLY=1e9;
+
+function updateMonitors(s,h){
+    const monL=document.getElementById('mon-left-screen');
+    const monR=document.getElementById('mon-right-screen');
+    let lhtml=`<div style="color:#ff9100;margin-bottom:3px">⚡ PUMP.FUN LIVE</div>`;
+    lhtml+=`<div style="color:#666;font-size:5px;margin-bottom:2px">${(s.current_action||'Scanning...').slice(0,45)}</div>`;
+    lhtml+=`<div style="border-top:1px solid #1a1d2720;padding-top:2px;margin-top:2px">`;
+    (s.story_log||[]).slice(-5).forEach(e=>{lhtml+=`<div style="color:#555;font-size:5px;margin:1px 0"><span style="color:#333">${e.time.slice(0,5)}</span> ${e.message}</div>`});
+    lhtml+=`</div>`;monL.innerHTML=lhtml;
+
+    let rh=`<div style="color:#00e676;margin-bottom:3px">💼 PORTFOLIO</div>`;
+    rh+=`<div style="display:flex;justify-content:space-between"><span>Cash</span><span style="color:#00e676">$${(s.cash||0).toFixed(2)}</span></div>`;
+    const pnl=s.total_pnl||0;
+    rh+=`<div style="display:flex;justify-content:space-between"><span>PnL</span><span style="color:${pnl>=0?'#00e676':'#ff5252'}">${pnl>=0?'+$':''}${pnl.toFixed(2)}</span></div>`;
+    rh+=`<div style="border-top:1px solid #1a1d2720;padding-top:2px;margin-top:2px">`;
+    Object.keys(h).slice(0,4).forEach(k=>{const v=h[k],cur=v.last_known_price||v.buy_price,val=v.amount*cur;const p=((cur-v.buy_price)/v.buy_price*100);const mc=cur*PUMPFUN_SUPPLY;
+        rh+=`<div style="margin-bottom:1px;font-size:5px"><div style="display:flex;justify-content:space-between"><span style="color:#00e676">${k}</span><span style="color:${p>=0?'#00e676':'#ff5252'}">${p>=0?'+':''}${p.toFixed(1)}%</span></div><div style="display:flex;justify-content:space-between;color:#444"><span>MCap ${fmtMcap(mc)}</span><span>$${val.toFixed(1)}</span></div></div>`});
+    if(!Object.keys(h).length)rh+=`<div style="color:#333;font-size:5px">No positions</div>`;
+    rh+=`</div>`;monR.innerHTML=rh;
+    document.getElementById('mon-left').classList.toggle('active',s.agent_station==='desk');
+
+    // Update TV
+    updateTV(s);
+}
+
+function updateTV(s){
+    const tvText=document.getElementById('tv-text');if(!tvText)return;
+    const daysLeft=getDaysLeft(s);const mood=s.mood||'safe';
+    let lines=[];
+    if(s.is_evicted){lines=['🚨 EVICTION NOTICE','Pack your stuff!','No rent = no home']}
+    else if(daysLeft<=1){lines=['⚠️ RENT DUE TOMORROW!','$500 needed NOW!',`Cash: $${(s.cash||0).toFixed(0)}`,'PAY UP OR GET OUT']}
+    else if(daysLeft<=2){lines=['📋 RENT REMINDER',`Due in ${daysLeft.toFixed(1)} days`,`Need: $500 | Have: $${(s.cash||0).toFixed(0)}`,s.cash>=500?'✅ Covered':'⚠️ Short!']}
+    else if(mood==='desperate'){lines=['🔥 DESPERATE MODE','Trading to survive!','Every dollar counts',' pressure is ON']}
+    else if(s.total_pnl>50){lines=['💰 PROFIT MODE',`PnL: +$${s.total_pnl.toFixed(0)}`,`${s.wins}W / ${s.losses}L`,`Next rent: ${daysLeft.toFixed(0)}d`]}
+    else{lines=[`Day ${s.day||1}`,`Cash: $${(s.cash||0).toFixed(0)}`,`${s.total_trades} trades`,`Rent: ${daysLeft.toFixed(0)}d away`]}
+    tvText.innerHTML=lines.map(l=>`<div style="margin:1px 0">${l}</div>`).join('');
+    // Update ticker based on urgency
+    const ticker=document.getElementById('tv-ticker');
+    if(ticker){
+        if(daysLeft<=1)ticker.style.animationDuration='5s';
+        else if(daysLeft<=3)ticker.style.animationDuration='8s';
+        else ticker.style.animationDuration='15s';
+    }
+}
+
+function flashMonitor(id){const el=document.getElementById(id);if(!el)return;el.classList.add('trading');setTimeout(()=>el.classList.remove('trading'),600)}
+function getDaysLeft(s){if(!s.rent_due_date)return 7;return Math.max(0,(new Date(s.rent_due_date)-new Date())/86400000)}
+function drawChart(c){const cv=document.getElementById('pnl-chart');if(!cv)return;const ctx=cv.getContext('2d'),w=cv.width=cv.offsetWidth*2,h=cv.height=48;ctx.clearRect(0,0,w,h);const wins=c.wins||0,losses=c.losses||0,total=wins+losses;if(!total)return;const pts=[];let r=0;for(let i=0;i<total&&i<20;i++){r+=i<wins?1:-0.5;pts.push(r)}const mx=Math.max(...pts,1),mn=Math.min(...pts,0),rng=mx-mn||1;ctx.strokeStyle=c.total_pnl>=0?'#00e676':'#ff5252';ctx.lineWidth=2;ctx.beginPath();pts.forEach((p,i)=>{const x=(i/(pts.length-1))*w,y=h-((p-mn)/rng)*(h-8)-4;i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke()}
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+// ═══ MOBILE CHARACTER REPOSITION ═══
+// Detect layout by checking if building is vertical (rooms stacked)
+function isVerticalLayout(){
+    const building=document.querySelector('.building');
+    if(!building)return false;
+    const s=getComputedStyle(building);
+    return s.flexDirection==='column';
+}
+function getLayoutPositions(){
+    const building=document.querySelector('.building');
+    if(!building)return null;
+    const bRect=building.getBoundingClientRect();
+    const scene=document.querySelector('.scene');
+    const sRect=scene.getBoundingClientRect();
+    // Building position relative to scene
+    const bTop=(bRect.top-sRect.top)/sRect.height*100;
+    const bH=bRect.height/sRect.height*100;
+    // Get room positions
+    const agentRoom=document.getElementById('agent-room');
+    const lordRoom=document.getElementById('landlord-room');
+    const aR=agentRoom.getBoundingClientRect();
+    const lR=lordRoom.getBoundingClientRect();
+    const aTop=((aR.top-sRect.top)/sRect.height*100);
+    const aBot=((aR.bottom-sRect.top)/sRect.height*100);
+    const lTop=((lR.top-sRect.top)/sRect.height*100);
+    const lBot=((lR.bottom-sRect.top)/sRect.height*100);
+    const aMid=(aTop+aBot)/2;
+    const lMid=(lTop+lBot)/2;
+    const aH=aBot-aTop;
+    const lH=lBot-lTop;
+    return{
+        vertical:isVerticalLayout(),
+        agent:{
+            desk:{left:'30%',top:(aMid).toFixed(0)+'%'},
+            window:{left:'60%',top:(aTop+aH*0.15).toFixed(0)+'%'},
+            poster:{left:'10%',top:(aTop+aH*0.2).toFixed(0)+'%'},
+            bookshelf:{left:'8%',top:(aBot-aH*0.15).toFixed(0)+'%'},
+            center:{left:'25%',top:(aMid-aH*0.1).toFixed(0)+'%'},
+            door:{left:'48%',top:(aBot-aH*0.08).toFixed(0)+'%'},
+            outside:{left:'10%',top:'93%'}
+        },
+        landlord:{
+            sofa:{left:'30%',top:(lMid).toFixed(0)+'%'},
+            tv:{left:'55%',top:(lTop+lH*0.15).toFixed(0)+'%'},
+            plant:{left:'75%',top:(lMid-lH*0.1).toFixed(0)+'%'},
+            coat:{left:'10%',top:(lTop+lH*0.2).toFixed(0)+'%'},
+            bookshelf:{left:'12%',top:(lBot-lH*0.15).toFixed(0)+'%'},
+            hallway:{left:'45%',top:((aBot+lTop)/2).toFixed(0)+'%'},
+            agent_door:{left:'25%',top:(lMid+lH*0.1).toFixed(0)+'%'}
+        }
+    };
+}
+let wasVertical=isVerticalLayout();
+function repositionChars(){
+    const layout=getLayoutPositions();
+    if(!layout)return;
+    const vertical=layout.vertical;
+    ['agent','landlord'].forEach(who=>{
+        const el=document.getElementById(who+'-char');if(!el)return;
+        const s=CS[who];const posList=layout[who];
+        const cur=posList[s.pos]||posList[Object.keys(posList)[0]];
+        el.classList.remove('no-trans');el.style.transition='left 0.5s ease, top 0.5s ease';
+        el.style.left=cur.left;el.style.top=cur.top;
+        setTimeout(()=>{el.classList.add('no-trans');el.style.transition=''},600);
+    });
+    // Override wandering spots for current layout
+    agentSpots.length=0;Object.entries(layout.agent).forEach(([name,pos])=>agentSpots.push({name,...pos}));
+    landlordSpots.length=0;Object.entries(layout.landlord).forEach(([name,pos])=>landlordSpots.push({name,...pos}));
+}
+function checkLayoutChange(){
+    const v=isVerticalLayout();
+    if(v!==wasVertical){wasVertical=v;repositionChars()}
+}
+setInterval(checkLayoutChange,1000);
+window.addEventListener('resize',()=>{setTimeout(repositionChars,150)});
+// Run on initial load
+function initLayout(){repositionChars()}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initLayout);
+else initLayout();
+window.addEventListener('load',initLayout);
+</script>
+</body>
+</html>

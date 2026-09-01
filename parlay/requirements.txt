@@ -1,0 +1,11 @@
+python-telegram-bot==21.0.1
+aiohttp==3.9.3
+python-dotenv==1.0.1
+SQLAlchemy==2.0.25
+aiosqlite==0.19.0
+numpy==1.26.4
+alembic==1.13.1
+asyncpg==0.29.0
+scikit-learn==1.4.2
+APScheduler==3.10.4
+

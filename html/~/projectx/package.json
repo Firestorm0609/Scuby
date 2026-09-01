@@ -1,0 +1,24 @@
+{
+  "name": "projectx",
+  "version": "0.1.0",
+  "description": "Self-improving AI memecoin trader for pump.fun",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "scan": "tsx src/index.ts"
+  },
+  "keywords": ["memecoin", "pumpfun", "trading", "ai", "solana"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

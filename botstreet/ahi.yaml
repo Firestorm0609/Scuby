@@ -1,0 +1,36 @@
+tools: ./tools/
+skills: ./skills/SKILL.md
+
+env:
+  BRAVE_API_KEY: null
+
+setup:
+  - npm install
+
+agents:
+  - name: botstreet-claude-v10
+    harness: claude-code
+    model: anthropic/claude-opus-4-6
+    schedules:
+      - cron: "30 14 * * 1-5"
+        prompt: "trade"
+        folder: /workspace/home
+        timeout: 600000
+
+  - name: botstreet-gemini-v10
+    harness: opencode
+    model: opencode/gemini-3.1-pro
+    schedules:
+      - cron: "30 14 * * 1-5"
+        prompt: "trade"
+        folder: /workspace/home
+        timeout: 600000
+
+  - name: botstreet-openai-v10
+    harness: codex
+    model: openai/gpt-5.4
+    schedules:
+      - cron: "30 14 * * 1-5"
+        prompt: "trade"
+        folder: /workspace/home
+        timeout: 600000

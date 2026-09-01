@@ -1,0 +1,179 @@
+#!/bin/bash
+# install_scuby_upgrades.sh
+# Run from your Scuby project root to apply all v2 upgrades.
+# Creates .bak files before overwriting anything.
+#
+# Required files in the same directory as this script:
+#   memory.py                — complete drop-in replacement
+#   handlers_ai_addition.py  — new file (was missing entirely)
+#   wallet_tracker.py        — new feature
+#   gemscore.py              — upgraded v2
+
+set -e
+
+echo ""
+echo "🐾 Scuby Upgrade Installer v2"
+echo "================================"
+echo ""
+
+backup_and_copy() {
+  local src="$1"
+  local dst="$2"
+  if [ -f "$dst" ]; then
+    cp "$dst" "${dst}.bak"
+    echo "  📦 Backed up $dst → ${dst}.bak"
+  fi
+  cp "$src" "$dst"
+  echo "  ✅ Installed $dst"
+}
+
+check_file() {
+  if [ ! -f "$1" ]; then
+    echo "  ❌ ERROR: $1 not found. Make sure all upgrade files are in the project root."
+    exit 1
+  fi
+}
+
+# ─── Preflight ────────────────────────────────────────────────────────────────
+
+echo "Checking upgrade files..."
+check_file "handlers_ai_addition.py"
+check_file "memory.py"
+check_file "wallet_tracker.py"
+check_file "gemscore.py"
+echo "  ✅ All upgrade files found"
+echo ""
+
+# ─── Step 1: handlers_ai_addition.py ─────────────────────────────────────────
+
+echo "Step 1: Installing handlers_ai_addition.py..."
+echo "  ✅ handlers_ai_addition.py ready (already in project root)"
+echo ""
+
+# ─── Step 2: memory.py ───────────────────────────────────────────────────────
+
+echo "Step 2: Installing complete memory.py..."
+backup_and_copy memory.py memory.py
+echo ""
+
+# ─── Step 3: wallet_tracker.py ───────────────────────────────────────────────
+
+echo "Step 3: Installing wallet_tracker.py..."
+echo "  ✅ wallet_tracker.py ready (already in project root)"
+echo ""
+
+# ─── Step 4: gemscore.py ─────────────────────────────────────────────────────
+
+echo "Step 4: Upgrading gemscore.py..."
+backup_and_copy gemscore.py gemscore.py
+echo ""
+
+# ─── Step 5: jobs.py — fix missing telegram import ───────────────────────────
+
+echo "Step 5: Fixing missing import in jobs.py..."
+if grep -q "from telegram import InlineKeyboardButton" jobs.py 2>/dev/null; then
+  echo "  ✅ jobs.py already has the import — skipping"
+else
+  cp jobs.py jobs.py.bak
+  sed -i '1s/^/from telegram import InlineKeyboardButton, InlineKeyboardMarkup\n/' jobs.py
+  echo "  ✅ jobs.py patched (backup: jobs.py.bak)"
+fi
+echo ""
+
+# ─── Step 6: main.py ─────────────────────────────────────────────────────────
+
+echo "Step 6: Patching main.py..."
+
+if grep -q "wallet_scan_job" main.py 2>/dev/null; then
+  echo "  ✅ main.py already patched — skipping"
+else
+  cp main.py main.py.bak
+  echo "  📦 Backed up main.py → main.py.bak"
+
+  python3 - <<'PYEOF'
+with open("main.py", "r") as f:
+    content = f.read()
+
+wallet_import = (
+    "from wallet_tracker import (\n"
+    "    handle_trackwallet, handle_wallets, handle_untrackwallet,\n"
+    "    handle_delwallet_button, wallet_scan_job,\n"
+    "    load_wallets, WALLET_POLL_INTERVAL,\n"
+    ")\n"
+)
+if "from wallet_tracker" not in content:
+    content = content.replace(
+        "from jobs import check_alerts_job",
+        wallet_import + "from jobs import check_alerts_job",
+    )
+
+if "handle_autofilter_button" not in content:
+    content = content.replace(
+        "    handle_delsmartwatch_button,\n)",
+        "    handle_delsmartwatch_button,\n    handle_autofilter_button,\n)",
+    )
+
+if "tracked_wallets" not in content:
+    content = content.replace(
+        '    application.bot_data["fired_alerts"]   = set()',
+        (
+            '    application.bot_data["fired_alerts"]   = set()\n'
+            '    application.bot_data["tracked_wallets"] = load_wallets()\n'
+            '    application.bot_data["global_pool"]     = {"tokens": {}, "contributed_tokens": 0}'
+        ),
+    )
+
+if "wallet_scan_job" not in content:
+    content = content.replace(
+        "    jq.run_repeating(learning_job,",
+        (
+            "    jq.run_repeating(wallet_scan_job,          interval=WALLET_POLL_INTERVAL,        first=90)\n"
+            "    jq.run_repeating(learning_job,"
+        ),
+    )
+
+if "trackwallet" not in content:
+    content = content.replace(
+        '    app.add_handler(CommandHandler("teach",         handle_teach))',
+        (
+            '    app.add_handler(CommandHandler("teach",         handle_teach))\n'
+            '    app.add_handler(CommandHandler("trackwallet",   handle_trackwallet))\n'
+            '    app.add_handler(CommandHandler("wallets",       handle_wallets))\n'
+            '    app.add_handler(CommandHandler("untrackwallet", handle_untrackwallet))'
+        ),
+    )
+
+if "delwallet" not in content:
+    content = content.replace(
+        '    app.add_handler(CallbackQueryHandler(handle_clearmemory_button,   pattern=r"^clearmemory\\|"))',
+        (
+            '    app.add_handler(CallbackQueryHandler(handle_clearmemory_button,   pattern=r"^clearmemory\\|"))\n'
+            '    app.add_handler(CallbackQueryHandler(handle_delwallet_button,     pattern=r"^delwallet\\|"))\n'
+            '    app.add_handler(CallbackQueryHandler(handle_autofilter_button,    pattern=r"^autofilter\\|"))'
+        ),
+    )
+
+with open("main.py", "w") as f:
+    f.write(content)
+
+print("  ✅ main.py patched successfully")
+PYEOF
+fi
+echo ""
+
+# ─── Done ─────────────────────────────────────────────────────────────────────
+
+echo "================================"
+echo "🐾 Scuby v2 upgrade complete!"
+echo ""
+echo "What's new:"
+echo "  🤖 handlers_ai_addition.py — /ask /smartwatch /smartwatches now fully work"
+echo "  🧠 memory.py               — 5 missing functions added (suggestions, patterns)"
+echo "  🐋 wallet_tracker.py       — whale wallet tracking (/trackwallet /wallets)"
+echo "  🎯 gemscore.py             — upgraded to 9 signals (liq quality + vol health)"
+echo "  🐛 jobs.py                 — fixed missing InlineKeyboardButton import"
+echo "  ⚡ main.py                 — all new commands and callbacks wired in"
+echo ""
+echo "Start the bot:"
+echo "  python main.py"
+echo ""

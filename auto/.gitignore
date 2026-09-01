@@ -1,0 +1,15 @@
+# Secrets — never commit these
+.env
+
+# Pipeline output
+output/
+captions/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+
+# Assets (add your own font.ttf locally)
+assets/font.ttf

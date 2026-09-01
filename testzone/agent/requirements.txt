@@ -1,0 +1,20 @@
+# AI Memecoin Trading Agent — Dependencies
+# All free, zero-cost
+
+# Core
+httpx>=0.25.0              # Async HTTP client
+pyyaml>=6.0                # Config file parsing
+
+# Solana (for transaction execution)
+solana>=0.30.0             # Solana Python SDK
+solders>=0.18.0            # Solana data types
+spl-token>=0.3.0           # SPL token operations
+
+# Data
+# (all API clients use httpx, no extra deps needed)
+
+# LLM
+# (uses Ollama REST API via httpx, no extra deps needed)
+
+# Alerts
+# (Telegram via httpx, no extra deps needed)
